@@ -1,36 +1,92 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SS Cuentas — PWA de finanzas personales
 
-## Getting Started
+Next.js (App Router) + Supabase + Tailwind + Web Speech API.
 
-First, run the development server:
+## 1. Requisitos
+
+- Node.js 20+
+- Cuenta en [Supabase](https://supabase.com)
+- Chrome o Edge para el dictado (Web Speech API)
+
+## 2. Instalar
+
+```bash
+cd ss-cuentas
+npm install
+```
+
+Copiá las variables:
+
+```bash
+cp .env.example .env.local
+```
+
+Completá en `.env.local`:
+
+| Variable | Dónde obtenerla |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Proyecto → Settings → API → Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Settings → API → `anon` `public` |
+
+## 3. Base de datos y RLS
+
+1. En el dashboard de Supabase, abrí **SQL Editor**.
+2. Pegá y ejecutá `supabase/migrations/001_init.sql`.
+3. Eso crea tablas, FKs, trigger de perfil, categorías semilla, cuentas iniciales y políticas RLS.
+
+En **Authentication → Providers** dejá habilitado Email. Para desarrollo local podés desactivar “Confirm email”.
+
+## 4. Correr en local
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abrí [http://localhost:3000](http://localhost:3000), registrate y cargá una tarjeta en **Tarjetas** para poder dictar compras con crédito.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 5. PWA y offline
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- El manifest está en `app/manifest.ts`.
+- El service worker `public/sw.js` cachea el app shell.
+- Si no hay red, `lib/offline/sync.ts` guarda transacciones en IndexedDB y las sube al reconectar.
 
-## Learn More
+En desktop, Chrome → Instalar app. En móvil, “Agregar a pantalla de inicio”. HTTPS (o localhost) es obligatorio para el SW y el micrófono.
 
-To learn more about Next.js, take a look at the following resources:
+## 6. Voz
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+El micrófono vive en `components/entry/voice-entry.tsx`. El parseo está en `lib/parsers/voice-parser.ts`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Ejemplos:
 
-## Deploy on Vercel
+- *Compré carne, gasté 20 mil pesos*
+- *Compré en 6 cuotas de 15 mil en la tarjeta*
+- *Gasté 50 dólares con la tarjeta extensión*
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Revisá siempre el modal de confirmación antes de guardar.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Estructura
+
+```
+ss-cuentas/
+  app/                    # rutas App Router
+    dashboard/
+    transacciones/        # carga manual + voz
+    historial/            # filtros + CSV
+    tarjetas/
+    cuentas/
+    presupuestos/
+    fijos/
+    configuracion/
+    login/ register/
+  components/
+    entry/voice-entry.tsx
+    ui/                   # botones, cards, dialog (estilo Shadcn)
+    layout/app-shell.tsx
+  lib/
+    parsers/voice-parser.ts
+    finance/settlement.ts # cierre de tarjeta, cuotas, USD
+    supabase/
+    offline/sync.ts
+  supabase/migrations/001_init.sql
+  public/sw.js
+```
