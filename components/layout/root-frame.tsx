@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 
-const PUBLIC = new Set(["/", "/login", "/register", "/offline"]);
+const PUBLIC = new Set(["/", "/login", "/register", "/offline", "/recuperar"]);
 
 export function RootFrame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

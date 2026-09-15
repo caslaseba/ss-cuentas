@@ -1,7 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { normalizeSupabaseUrl } from "@/lib/supabase/env";
 
-const PUBLIC_PATHS = ["/", "/login", "/register", "/offline", "/manifest.webmanifest"];
+const PUBLIC_PATHS = ["/", "/login", "/register", "/offline", "/recuperar", "/manifest.webmanifest"];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -11,7 +12,7 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse;
   }
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const url = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
 
   if (!url || !key) {
@@ -57,7 +58,7 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(redirect);
   }
 
-  if (user && (path === "/login" || path === "/register")) {
+  if (user && (path === "/" || path === "/login" || path === "/register")) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/dashboard";
     return NextResponse.redirect(redirect);

@@ -21,6 +21,7 @@ type FinanceContextValue = {
   profile: Profile | null;
   categories: Category[];
   accounts: Account[];
+  primaryAccount: Account | null;
   cards: CreditCard[];
   transactions: Transaction[];
   installments: Installment[];
@@ -39,7 +40,7 @@ type FinanceContextValue = {
     source?: Transaction["source"];
   }) => Promise<void>;
   saveAccount: (input: Partial<Account> & { name: string }) => Promise<void>;
-  saveCard: (input: Partial<CreditCard> & { name: string }) => Promise<void>;
+  saveCard: (input: Partial<CreditCard> & { name: string }) => Promise<CreditCard>;
   saveRecurring: (input: Partial<RecurringPayment> & { name: string; amount: number }) => Promise<void>;
   toggleRecurringPaid: (id: string, paid: boolean) => Promise<void>;
   updateProfile: (patch: Partial<Profile>) => Promise<void>;
@@ -85,7 +86,22 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     ]);
 
     if (p.data) setProfile(p.data as Profile);
-    if (c.data) setCategories(c.data as Category[]);
+    let cats = (c.data ?? []) as Category[];
+    if (!cats.some((x) => x.name === "Cigarrillos" && x.type === "egreso")) {
+      const { data: created } = await supabase
+        .from("categories")
+        .insert({
+          user_id: user.id,
+          name: "Cigarrillos",
+          type: "egreso",
+          icon: "cigarette",
+          is_default: true,
+        })
+        .select("*")
+        .single();
+      if (created) cats = [...cats, created as Category];
+    }
+    setCategories(cats);
     if (a.data) setAccounts(a.data as Account[]);
     if (cc.data) setCards(cc.data as CreditCard[]);
     if (t.data) setTransactions(t.data as Transaction[]);
@@ -125,13 +141,20 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     } = await supabase.auth.getUser();
     if (!user) throw new Error("Sin sesión");
 
+    const cash = (input.payment_method ?? "efectivo") !== "tarjeta_credito";
+    const walletId =
+      input.account_id ??
+      accounts.find((a) => !a.is_savings_box && a.kind === "caja_ahorro")?.id ??
+      accounts.find((a) => !a.is_savings_box)?.id ??
+      null;
+
     const payload = {
       user_id: user.id,
       type: input.type ?? "egreso",
       amount: input.amount,
       currency: input.currency ?? "ARS",
       category_id: input.category_id ?? null,
-      account_id: input.account_id ?? null,
+      account_id: cash ? walletId : null,
       credit_card_id: input.credit_card_id ?? null,
       installment_id: input.installment_id ?? null,
       installment_number: input.installment_number ?? null,
@@ -142,14 +165,39 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       source: input.source ?? "manual",
     };
 
+    const applyLocalWallet = () => {
+      if (!cash || !walletId) return;
+      const delta = payload.type === "ingreso" ? Number(payload.amount) : -Number(payload.amount);
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === walletId ? { ...a, balance: Number(a.balance) + delta } : a)),
+      );
+    };
+
     if (!navigator.onLine) {
       await enqueueOutbox({ table: "transactions", payload });
+      setTransactions((prev) => [
+        {
+          id: `local-${crypto.randomUUID()}`,
+          ...payload,
+        } as Transaction,
+        ...prev,
+      ]);
+      applyLocalWallet();
       toast.message("Guardado offline. Se sincroniza al reconectar.");
       return;
     }
 
     const { error } = await supabase.from("transactions").insert(payload);
     if (error) throw error;
+
+    if (cash && walletId) {
+      const acc = accounts.find((a) => a.id === walletId);
+      if (acc) {
+        const delta = payload.type === "ingreso" ? Number(payload.amount) : -Number(payload.amount);
+        await supabase.from("accounts").update({ balance: Number(acc.balance) + delta }).eq("id", walletId);
+      }
+    }
+
     await refresh();
   };
 
@@ -218,20 +266,25 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) throw new Error("Sin sesión");
-    const { error } = await supabase.from("credit_cards").insert({
-      user_id: user.id,
-      name: input.name,
-      kind: input.kind ?? "principal",
-      parent_card_id: input.parent_card_id ?? null,
-      closing_day: input.closing_day ?? 10,
-      due_day: input.due_day ?? 20,
-      credit_limit: input.credit_limit ?? 0,
-      available_limit: input.available_limit ?? input.credit_limit ?? 0,
-      usd_tax_pct: input.usd_tax_pct ?? 0,
-      last4: input.last4 ?? null,
-    });
+    const { data, error } = await supabase
+      .from("credit_cards")
+      .insert({
+        user_id: user.id,
+        name: input.name,
+        kind: input.kind ?? "principal",
+        parent_card_id: input.parent_card_id ?? null,
+        closing_day: input.closing_day ?? 10,
+        due_day: input.due_day ?? 20,
+        credit_limit: input.credit_limit ?? 0,
+        available_limit: input.available_limit ?? input.credit_limit ?? 0,
+        usd_tax_pct: input.usd_tax_pct ?? 0,
+        last4: input.last4 ?? null,
+      })
+      .select("*")
+      .single();
     if (error) throw error;
     await refresh();
+    return data as CreditCard;
   };
 
   const saveRecurring: FinanceContextValue["saveRecurring"] = async (input) => {
@@ -268,7 +321,8 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
   const updateProfile = async (patch: Partial<Profile>) => {
     if (!profile) return;
-    const { error } = await supabase.from("profiles").update(patch).eq("id", profile.id);
+    const { id: _id, role: _role, ...safe } = patch;
+    const { error } = await supabase.from("profiles").update(safe).eq("id", profile.id);
     if (error) throw error;
     await refresh();
   };
@@ -279,6 +333,12 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     await refresh();
   };
 
+  const primaryAccount =
+    accounts.find((a) => !a.is_savings_box && a.kind === "caja_ahorro") ??
+    accounts.find((a) => !a.is_savings_box) ??
+    accounts[0] ??
+    null;
+
   return (
     <FinanceContext.Provider
       value={{
@@ -287,6 +347,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         profile,
         categories,
         accounts,
+        primaryAccount,
         cards,
         transactions,
         installments,

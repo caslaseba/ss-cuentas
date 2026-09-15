@@ -15,6 +15,7 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [forgot, setForgot] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,6 +40,59 @@ function LoginForm() {
     }
   }
 
+  async function onForgot(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const res = await fetch("/api/auth/forgot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok || data.error) {
+        toast.error(data.error || `Error ${res.status}`);
+        return;
+      }
+      toast.success("Si el email existe, te mandamos un enlace para definir una contraseña nueva.");
+      setForgot(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo enviar el correo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (forgot) {
+    return (
+      <form className="space-y-3" onSubmit={(e) => void onForgot(e)}>
+        <p className="text-sm text-muted-foreground">
+          Las contraseñas no se pueden ver. Te enviamos un enlace para crear una nueva.
+        </p>
+        <div>
+          <Label>Email</Label>
+          <Input
+            className="mt-1.5"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+        </div>
+        <Button className="w-full" disabled={busy} type="submit">
+          {busy ? "Enviando…" : "Enviar enlace"}
+        </Button>
+        <button
+          className="w-full text-center text-sm text-primary underline"
+          type="button"
+          onClick={() => setForgot(false)}
+        >
+          Volver a ingresar
+        </button>
+      </form>
+    );
+  }
+
   return (
     <form className="space-y-3" onSubmit={(e) => void onSubmit(e)}>
       <div>
@@ -52,6 +106,13 @@ function LoginForm() {
       <Button className="w-full" disabled={busy} type="submit">
         {busy ? "Ingresando…" : "Ingresar"}
       </Button>
+      <button
+        className="w-full text-center text-sm text-muted-foreground underline"
+        type="button"
+        onClick={() => setForgot(true)}
+      >
+        Olvidé mi contraseña
+      </button>
     </form>
   );
 }

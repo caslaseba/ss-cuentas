@@ -2,23 +2,29 @@
 
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
-import { ExpensePie, MonthlyBars, StatCard } from "@/components/dashboard/charts";
 import { VoiceEntry } from "@/components/entry/voice-entry";
+import { QuickManual } from "@/components/entry/quick-manual";
 import { useFinance } from "@/components/providers/finance-provider";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getBillingCycle, inCycle, usdToLocal } from "@/lib/finance/settlement";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { summarizeCard, usdToLocal } from "@/lib/finance/settlement";
+import { categoryLabel } from "@/lib/finance/match";
+import { monthWallet } from "@/lib/finance/wallet";
 import { formatMoney } from "@/lib/utils";
 
 export default function DashboardPage() {
-  const { transactions, categories, cards, installments, profile } = useFinance();
+  const {
+    transactions,
+    categories,
+    cards,
+    installments,
+    profile,
+    recurring,
+    toggleRecurringPaid,
+    saveTransaction,
+  } = useFinance();
   const now = new Date();
-  const month = now.getMonth();
-  const year = now.getFullYear();
-
-  const monthTx = transactions.filter((t) => {
-    const d = parseISO(t.occurred_on);
-    return d.getMonth() === month && d.getFullYear() === year;
-  });
 
   const toArs = (amount: number, currency: "ARS" | "USD") => {
     if (currency === "ARS") return amount;
@@ -29,101 +35,142 @@ export default function DashboardPage() {
     );
   };
 
-  const ingresos = monthTx
-    .filter((t) => t.type === "ingreso")
-    .reduce((s, t) => s + toArs(Number(t.amount), t.currency), 0);
-  const egresos = monthTx
-    .filter((t) => t.type === "egreso")
-    .reduce((s, t) => s + toArs(Number(t.amount), t.currency), 0);
+  const wallet = monthWallet(transactions, toArs, now);
+  const pendingFixed = recurring.filter((r) => !r.is_paid);
 
-  const pieMap = monthTx
+  const byCategory = wallet.monthTx
     .filter((t) => t.type === "egreso")
     .reduce<Record<string, number>>((acc, t) => {
-      const name = categories.find((c) => c.id === t.category_id)?.name ?? "Sin categoría";
+      const name = categoryLabel(categories.find((c) => c.id === t.category_id)?.name ?? "Sin categoría");
       acc[name] = (acc[name] ?? 0) + toArs(Number(t.amount), t.currency);
       return acc;
     }, {});
-  const pieData = Object.entries(pieMap).map(([name, value]) => ({ name, value }));
 
-  const bars = Array.from({ length: 6 }, (_, idx) => {
-    const d = new Date(year, month - (5 - idx), 1);
-    const label = format(d, "MMM", { locale: es });
-    const subset = transactions.filter((t) => {
-      const dt = parseISO(t.occurred_on);
-      return dt.getMonth() === d.getMonth() && dt.getFullYear() === d.getFullYear();
-    });
-    return {
-      name: label,
-      ingresos: subset
-        .filter((t) => t.type === "ingreso")
-        .reduce((s, t) => s + toArs(Number(t.amount), t.currency), 0),
-      egresos: subset
-        .filter((t) => t.type === "egreso")
-        .reduce((s, t) => s + toArs(Number(t.amount), t.currency), 0),
-    };
-  });
-
-  const cardDebt = cards.reduce((sum, card) => {
-    const cycle = getBillingCycle(card);
-    const tx = transactions.filter(
-      (t) => t.credit_card_id === card.id && t.type === "egreso" && inCycle(t.occurred_on, cycle),
-    );
-    return (
-      sum +
-      tx.reduce((s, t) => s + toArs(Number(t.amount), t.currency), 0)
-    );
-  }, 0);
+  const recent = [...wallet.monthTx].sort((a, b) => b.occurred_on.localeCompare(a.occurred_on)).slice(0, 12);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Resumen</h1>
-          <p className="text-sm text-muted-foreground">
-            {format(now, "MMMM yyyy", { locale: es })} · cotización USD {profile?.usd_exchange_rate ?? "—"}
-          </p>
-        </div>
-        <div className="hidden sm:block">
-          <VoiceEntry compact />
-        </div>
+    <div className="mx-auto max-w-lg space-y-5">
+      <div>
+        <p className="text-sm text-muted-foreground">{format(now, "MMMM yyyy", { locale: es })}</p>
+        <p className="text-sm font-medium text-muted-foreground">Te queda</p>
+        <p className="text-4xl font-semibold tracking-tight">{formatMoney(wallet.queda, "ARS")}</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Cobraste {formatMoney(wallet.cobrado, "ARS")} · gastaste {formatMoney(wallet.gastadoContado, "ARS")}
+        </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard title="Ingresos del mes" value={formatMoney(ingresos, "ARS")} />
-        <StatCard title="Egresos del mes" value={formatMoney(egresos, "ARS")} />
-        <StatCard
-          title="Balance"
-          value={formatMoney(ingresos - egresos, "ARS")}
-          hint="Ingresos menos egresos (USD convertido)"
-        />
-        <StatCard
-          title="Saldo en tarjetas"
-          value={formatMoney(cardDebt, "ARS")}
-          hint={`${cards.length} tarjetas · ${installments.length} planes de cuotas`}
-        />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Distribución de egresos</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ExpensePie data={pieData} />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Últimos 6 meses</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <MonthlyBars data={bars} />
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="flex justify-center sm:hidden">
+      <div className="flex flex-col items-center gap-2 rounded-3xl border border-dashed border-primary/30 bg-primary/5 px-4 py-6">
         <VoiceEntry />
+        <p className="max-w-xs text-center text-sm text-muted-foreground">
+          Tocá el micrófono y hablá. Ej: “Cobré 2 millones” o “Compré 2 kgs de milanesa por 15 mil”.
+        </p>
+      </div>
+
+      <Card>
+        <CardContent className="pt-5">
+          <p className="mb-3 text-sm font-medium">O cargalo a mano</p>
+          <QuickManual />
+        </CardContent>
+      </Card>
+
+      {Object.keys(byCategory).length > 0 ? (
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium">Gastos del mes</h2>
+          {Object.entries(byCategory)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, value]) => (
+              <div key={name} className="flex items-center justify-between rounded-xl bg-muted/60 px-3 py-2 text-sm">
+                <span>{name}</span>
+                <span className="font-medium">{formatMoney(value, "ARS")}</span>
+              </div>
+            ))}
+        </div>
+      ) : null}
+
+      {cards.map((card) => {
+        const summary = profile ? summarizeCard(card, transactions, installments, profile) : null;
+        if (!summary) return null;
+        return (
+          <Card key={card.id}>
+            <CardContent className="pt-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">{card.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Cierra el {card.closing_day} · vence el {card.due_day}
+                  </p>
+                </div>
+                <Badge tone="usd">Este resumen</Badge>
+              </div>
+              <p className="mt-2 text-2xl font-semibold">{formatMoney(summary.totalLocal, "ARS")}</p>
+              <p className="text-xs text-muted-foreground">{summary.cycle.label}</p>
+            </CardContent>
+          </Card>
+        );
+      })}
+
+      {pendingFixed.length > 0 ? (
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium">Servicios a pagar</h2>
+          {pendingFixed.map((r) => (
+            <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2">
+              <div>
+                <p className="text-sm font-medium">{r.name}</p>
+                <p className="text-xs text-muted-foreground">Día {r.due_day}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">{formatMoney(Number(r.amount), r.currency)}</span>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    void (async () => {
+                      await toggleRecurringPaid(r.id, true);
+                      await saveTransaction({
+                        type: "egreso",
+                        amount: Number(r.amount),
+                        currency: r.currency,
+                        concept: r.name,
+                        payment_method: "transferencia",
+                        category_id: r.category_id,
+                        source: "recurrente",
+                      });
+                    })();
+                  }}
+                >
+                  Pagué
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="space-y-2 pb-4">
+        <h2 className="text-sm font-medium">Últimos movimientos</h2>
+        {recent.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Todavía no hay nada este mes. Dictá un cobro para empezar.</p>
+        ) : null}
+        {recent.map((t) => {
+          const cat = categories.find((c) => c.id === t.category_id)?.name;
+          const catLabel = cat ? categoryLabel(cat) : null;
+          const sign = t.type === "ingreso" ? "+" : "−";
+          return (
+            <div key={t.id} className="flex items-center justify-between gap-3 text-sm">
+              <div>
+                <p className="font-medium">{t.concept}</p>
+                <p className="text-xs text-muted-foreground">
+                  {format(parseISO(t.occurred_on), "d MMM", { locale: es })}
+                  {catLabel ? ` · ${catLabel}` : ""}
+                  {t.payment_method === "tarjeta_credito" ? " · tarjeta" : ""}
+                </p>
+              </div>
+              <span className={t.type === "ingreso" ? "font-medium text-emerald-700" : "font-medium"}>
+                {sign}
+                {formatMoney(Number(t.amount), t.currency)}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

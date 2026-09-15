@@ -9,14 +9,25 @@ export type PaymentMethod =
   | "billetera"
   | "tarjeta_credito";
 export type RecurrenceFrequency = "mensual" | "semanal" | "anual";
+export type UserRole = "user" | "admin";
 
 export type Profile = {
   id: string;
   email: string | null;
   full_name: string | null;
+  role?: UserRole;
   local_currency: CurrencyCode;
   usd_exchange_rate: number;
   tax_surcharge_pct: number;
+};
+
+export type ManagedUser = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: UserRole;
+  created_at: string | null;
+  last_sign_in_at: string | null;
 };
 
 export type Category = {
@@ -107,6 +118,8 @@ export type VoiceParseResult = {
   installmentCount: number | null;
   installmentAmount: number | null;
   cardHint: "principal" | "extension" | null;
+  cardNameHint: string | null;
+  categoryHint: string | null;
   paymentMethod: PaymentMethod;
   raw: string;
   confidence: "alta" | "media" | "baja";

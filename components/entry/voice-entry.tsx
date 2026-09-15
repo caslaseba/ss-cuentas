@@ -15,14 +15,16 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { useFinance } from "@/components/providers/finance-provider";
 import { useSpeechToText } from "@/hooks/use-speech";
+import { matchCard, matchCategory, categoryLabel } from "@/lib/finance/match";
 import { parseVoiceCommand, VOICE_EXAMPLES } from "@/lib/parsers/voice-parser";
-import { isoDate } from "@/lib/utils";
+import { formatMoney, isoDate } from "@/lib/utils";
 import type { CurrencyCode, PaymentMethod, TransactionType } from "@/lib/types";
 
 export function VoiceEntry({ compact = false }: { compact?: boolean }) {
-  const { categories, cards, accounts, saveTransaction, saveInstallmentPurchase } = useFinance();
+  const { categories, cards, saveTransaction, saveInstallmentPurchase, saveCard } = useFinance();
   const speech = useSpeechToText();
   const [open, setOpen] = useState(false);
+  const [edit, setEdit] = useState(false);
   const parsed = useMemo(
     () => (speech.transcript ? parseVoiceCommand(speech.transcript) : null),
     [speech.transcript],
@@ -34,7 +36,6 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
   const [concept, setConcept] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("efectivo");
   const [categoryId, setCategoryId] = useState("");
-  const [accountId, setAccountId] = useState("");
   const [cardId, setCardId] = useState("");
   const [cuotas, setCuotas] = useState("");
   const [date, setDate] = useState(isoDate(new Date()));
@@ -47,34 +48,49 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
     setConcept(parsed.concept);
     setMethod(parsed.paymentMethod);
     setCuotas(parsed.installmentCount ? String(parsed.installmentCount) : "");
-    if (parsed.cardHint) {
-      const match = cards.find((c) => c.kind === parsed.cardHint);
-      if (match) setCardId(match.id);
+    const card = matchCard(cards, parsed.cardNameHint, parsed.cardHint);
+    if (card) {
+      setCardId(card.id);
       setMethod("tarjeta_credito");
     }
-    const cat = categories.find(
-      (c) =>
-        c.type === parsed.type &&
-        parsed.concept.toLowerCase().includes(c.name.toLowerCase().slice(0, 5)),
-    );
+    const cat = matchCategory(categories, parsed.type, parsed.concept, parsed.categoryHint);
     if (cat) setCategoryId(cat.id);
+    setEdit(parsed.confidence === "baja");
   }, [parsed, cards, categories]);
+
+  const categoryName = categories.find((c) => c.id === categoryId)?.name;
+  const cardName = cards.find((c) => c.id === cardId)?.name;
+  const amountN = Number(amount) || 0;
 
   async function confirm() {
     try {
       const n = Number(amount);
       if (!concept || !n) {
         toast.error("Faltan concepto o monto.");
+        setEdit(true);
         return;
       }
+      let resolvedCardId = cardId;
+      if (method === "tarjeta_credito" && !resolvedCardId) {
+        const brand = parsed?.cardNameHint || "Visa";
+        const pretty = brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase();
+        const created = await saveCard({
+          name: pretty,
+          kind: "principal",
+          closing_day: 10,
+          due_day: 20,
+        });
+        resolvedCardId = created.id;
+        toast.message(`${pretty} agregada. Podés cambiar el cierre en Más.`);
+      }
       const cuotaN = Number(cuotas);
-      if (cuotaN >= 2 && cardId) {
+      if (cuotaN >= 2 && resolvedCardId) {
         await saveInstallmentPurchase({
           concept,
           installmentAmount: n,
           count: cuotaN,
           currency,
-          credit_card_id: cardId,
+          credit_card_id: resolvedCardId,
           category_id: categoryId || null,
           occurred_on: date,
           source: "voz",
@@ -87,13 +103,12 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
           concept,
           payment_method: method,
           category_id: categoryId || null,
-          account_id: accountId || null,
-          credit_card_id: method === "tarjeta_credito" ? cardId || null : null,
+          credit_card_id: method === "tarjeta_credito" ? resolvedCardId || null : null,
           occurred_on: date,
           source: "voz",
         });
       }
-      toast.success("Movimiento registrado");
+      toast.success(type === "ingreso" ? "Cobro sumado a tu cuenta" : method === "tarjeta_credito" ? "Sumado a la tarjeta" : "Descontado de tu plata");
       setOpen(false);
       speech.setTranscript("");
     } catch (e) {
@@ -103,32 +118,26 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
 
   return (
     <>
-      <div className={compact ? "" : "flex flex-col items-center gap-3"}>
-        <Button
-          type="button"
-          variant={compact ? "default" : "mic"}
-          size={compact ? "lg" : undefined}
-          className={compact ? "w-full" : "h-20 w-20"}
-          onClick={() => {
-            setOpen(true);
-            speech.start();
-          }}
-          aria-label="Cargar por voz"
-        >
-          <Mic className={compact ? "h-4 w-4" : "h-8 w-8"} />
-          {compact ? "Dictar gasto" : null}
-        </Button>
-        {!compact && (
-          <p className="max-w-xs text-center text-xs text-muted-foreground">
-            Tocá el micrófono y dictá. Ej: “Compré carne, gasté 20 mil pesos”.
-          </p>
-        )}
-      </div>
+      <Button
+        type="button"
+        variant={compact ? "default" : "mic"}
+        size={compact ? "lg" : undefined}
+        className={compact ? "w-full" : "h-24 w-24 shadow-xl"}
+        onClick={() => {
+          setOpen(true);
+          setEdit(false);
+          speech.start();
+        }}
+        aria-label="Dictar"
+      >
+        <Mic className={compact ? "h-4 w-4" : "h-10 w-10"} />
+        {compact ? "Dictar" : null}
+      </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="w-[min(100%-1rem,28rem)]">
           <DialogHeader>
-            <DialogTitle>Carga por voz</DialogTitle>
+            <DialogTitle>{speech.listening ? "Te escucho…" : "¿Está bien?"}</DialogTitle>
           </DialogHeader>
 
           <div className="mb-4 flex items-center justify-center">
@@ -144,93 +153,89 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
 
           {!speech.supported && (
             <p className="mb-3 text-sm text-amber-600">
-              Este navegador no expone Web Speech API. Usá Chrome/Edge o el formulario manual.
+              En el celular usá Chrome. El micrófono necesita HTTPS (o localhost).
             </p>
           )}
           {speech.error && <p className="mb-3 text-sm text-destructive">{speech.error}</p>}
 
           <p className="mb-3 min-h-10 rounded-xl bg-muted p-3 text-sm">
-            {speech.transcript || "Esperando audio…"}
+            {speech.transcript || "Probá: “Cobré 2 millones” o “Compré milanesa por 15 mil”."}
           </p>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Tipo">
-              <Select value={type} onChange={(e) => setType(e.target.value as TransactionType)}>
-                <option value="egreso">Egreso</option>
-                <option value="ingreso">Ingreso</option>
-              </Select>
-            </Field>
-            <Field label="Monto (cuota si aplica)">
-              <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
-            </Field>
-            <Field label="Moneda">
-              <Select value={currency} onChange={(e) => setCurrency(e.target.value as CurrencyCode)}>
-                <option value="ARS">ARS</option>
-                <option value="USD">USD</option>
-              </Select>
-            </Field>
-            <Field label="Medio">
-              <Select value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-                <option value="efectivo">Efectivo</option>
-                <option value="debito">Débito</option>
-                <option value="transferencia">Transferencia</option>
-                <option value="billetera">Billetera</option>
-                <option value="tarjeta_credito">Tarjeta</option>
-              </Select>
-            </Field>
-            <Field label="Concepto" className="col-span-2">
-              <Input value={concept} onChange={(e) => setConcept(e.target.value)} />
-            </Field>
-            <Field label="Cuotas">
-              <Input value={cuotas} onChange={(e) => setCuotas(e.target.value)} placeholder="1" />
-            </Field>
-            <Field label="Fecha">
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            </Field>
-            <Field label="Categoría">
-              <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-                <option value="">Sin categoría</option>
-                {categories
-                  .filter((c) => c.type === type)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-              </Select>
-            </Field>
-            <Field label="Cuenta">
-              <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-                <option value="">—</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Tarjeta" className="col-span-2">
-              <Select value={cardId} onChange={(e) => setCardId(e.target.value)}>
-                <option value="">—</option>
-                {cards.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.kind})
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
+          {!edit && parsed ? (
+            <div className="mb-4 space-y-1 rounded-2xl border border-border p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                {type === "ingreso" ? "Cobro" : method === "tarjeta_credito" ? "Gasto con tarjeta" : "Gasto"}
+              </p>
+              <p className="text-3xl font-semibold">{amountN ? formatMoney(amountN, currency) : "—"}</p>
+              <p className="text-sm font-medium">{concept || "Sin concepto"}</p>
+              <p className="text-xs text-muted-foreground">
+                {categoryName ? categoryLabel(categoryName) : "Sin categoría"}
+                {method === "tarjeta_credito" ? ` · ${cardName ?? "Tarjeta"}` : " · sale de tu plata"}
+              </p>
+            </div>
+          ) : null}
 
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              Cancelar
+          {edit ? (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Tipo">
+                <Select value={type} onChange={(e) => setType(e.target.value as TransactionType)}>
+                  <option value="egreso">Gasto</option>
+                  <option value="ingreso">Cobro</option>
+                </Select>
+              </Field>
+              <Field label="Monto">
+                <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+              </Field>
+              <Field label="Qué fue" className="col-span-2">
+                <Input value={concept} onChange={(e) => setConcept(e.target.value)} />
+              </Field>
+              <Field label="Categoría">
+                <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+                  <option value="">Sin categoría</option>
+                  {categories
+                    .filter((c) => c.type === type)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                </Select>
+              </Field>
+              <Field label="Pago">
+                <Select value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
+                  <option value="efectivo">Plata / débito</option>
+                  <option value="tarjeta_credito">Tarjeta</option>
+                </Select>
+              </Field>
+              {method === "tarjeta_credito" ? (
+                <Field label="Tarjeta" className="col-span-2">
+                  <Select value={cardId} onChange={(e) => setCardId(e.target.value)}>
+                    <option value="">Nueva Visa</option>
+                    {cards.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              ) : null}
+              <Field label="Fecha" className="col-span-2">
+                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              </Field>
+            </div>
+          ) : null}
+
+          <div className="mt-4 flex flex-col gap-2">
+            <Button className="h-12 text-base" onClick={() => void confirm()}>
+              Listo, guardar
             </Button>
-            <Button onClick={() => void confirm()}>Confirmar</Button>
+            <Button variant="outline" onClick={() => setEdit((v) => !v)}>
+              {edit ? "Ver resumen" : "Corregir"}
+            </Button>
           </div>
 
-          <p className="mt-4 text-[11px] text-muted-foreground">
-            Ejemplos: {VOICE_EXAMPLES.slice(0, 3).join(" · ")}
-          </p>
+          <p className="mt-3 text-[11px] text-muted-foreground">Ej: {VOICE_EXAMPLES[1]}</p>
         </DialogContent>
       </Dialog>
     </>
