@@ -3,29 +3,16 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { CardManager } from "@/components/cards/card-manager";
 import { useFinance } from "@/components/providers/finance-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { formatMoney } from "@/lib/utils";
-import { summarizeCard } from "@/lib/finance/settlement";
 
 export default function MasPage() {
-  const {
-    cards,
-    transactions,
-    installments,
-    profile,
-    recurring,
-    saveCard,
-    saveRecurring,
-    primaryAccount,
-  } = useFinance();
+  const { recurring, saveRecurring, primaryAccount } = useFinance();
   const [isAdmin, setIsAdmin] = useState(false);
-  const [cardName, setCardName] = useState("Visa");
-  const [closing, setClosing] = useState("10");
-  const [due, setDue] = useState("20");
   const [fixedName, setFixedName] = useState("");
   const [fixedAmount, setFixedAmount] = useState("");
   const [fixedDay, setFixedDay] = useState("10");
@@ -41,7 +28,9 @@ export default function MasPage() {
     <div className="mx-auto max-w-lg space-y-5">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Más</h1>
-        <p className="text-sm text-muted-foreground">Tarjetas, servicios y ajustes. El día a día está en Hoy.</p>
+        <p className="text-sm text-muted-foreground">
+          Cierre y vencimiento de la tarjeta, extensión de tu papá, servicios y ajustes.
+        </p>
       </div>
 
       {primaryAccount ? (
@@ -54,57 +43,7 @@ export default function MasPage() {
         </Card>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Tarjetas</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {cards.map((card) => {
-            const summary = profile ? summarizeCard(card, transactions, installments, profile) : null;
-            return (
-              <div key={card.id} className="rounded-xl border border-border p-3">
-                <p className="font-medium">{card.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  Cierra el {card.closing_day} · vence el {card.due_day}
-                </p>
-                <p className="mt-1 text-lg font-semibold">
-                  {summary ? formatMoney(summary.totalLocal, "ARS") : "—"} este resumen
-                </p>
-              </div>
-            );
-          })}
-          <form
-            className="grid grid-cols-3 gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void saveCard({
-                name: cardName,
-                kind: "principal",
-                closing_day: Number(closing) || 10,
-                due_day: Number(due) || 20,
-              })
-                .then(() => toast.success("Tarjeta lista"))
-                .catch((err) => toast.error(err instanceof Error ? err.message : "Error"));
-            }}
-          >
-            <div className="col-span-3">
-              <Label>Nueva tarjeta</Label>
-              <Input className="mt-1.5" value={cardName} onChange={(e) => setCardName(e.target.value)} />
-            </div>
-            <div>
-              <Label>Cierre</Label>
-              <Input className="mt-1.5" value={closing} onChange={(e) => setClosing(e.target.value)} />
-            </div>
-            <div>
-              <Label>Vence</Label>
-              <Input className="mt-1.5" value={due} onChange={(e) => setDue(e.target.value)} />
-            </div>
-            <Button className="self-end" type="submit">
-              Agregar
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      <CardManager />
 
       <Card>
         <CardHeader>

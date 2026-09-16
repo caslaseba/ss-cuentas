@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
 import { Home, LogOut, MoreHorizontal } from "lucide-react";
 import { Toaster } from "sonner";
 import { FinanceProvider, useFinance } from "@/components/providers/finance-provider";

@@ -27,3 +27,26 @@ export function monthWallet(transactions: Transaction[], toArs: (amount: number,
     monthTx,
   };
 }
+
+export function methodBreakdown(
+  transactions: Transaction[],
+  toArs: (amount: number, currency: Transaction["currency"]) => number,
+) {
+  const buckets: Record<string, number> = {};
+  for (const t of transactions.filter((x) => x.type === "egreso")) {
+    const key =
+      t.payment_method === "billetera"
+        ? "Mercado Pago"
+        : t.payment_method === "tarjeta_credito"
+          ? "Tarjeta"
+          : t.payment_method === "efectivo"
+            ? "Efectivo"
+            : t.payment_method === "debito"
+              ? "Débito"
+              : "Transferencia";
+    buckets[key] = (buckets[key] ?? 0) + toArs(Number(t.amount), t.currency);
+  }
+  return Object.entries(buckets)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, amount]) => ({ name, amount }));
+}

@@ -15,7 +15,7 @@ const EXPENSE_HINTS =
 const USD_HINTS = /\b(d[oó]lar(?:es)?|usd|green|u\$s|uss)\b/i;
 const ARS_HINTS = /\b(pesos?|ars|plata|mango(?:s)?)\b/i;
 
-const EXTENSION_HINTS = /\b(extensi[oó]n|adicional)\b/i;
+const EXTENSION_HINTS = /\b(extensi[oó]n|adicional|papa|papi)\b/i;
 const CARD_BRANDS = /\b(visa|mastercard|master|amex|naranja|cabal|maestro)\b/i;
 const CARD_HINTS = /\b(tarjeta|cr[eé]dito|visa|mastercard|amex|naranja|cabal)\b/i;
 const CASH_HINTS = /\b(efectivo|contado|mano)\b/i;

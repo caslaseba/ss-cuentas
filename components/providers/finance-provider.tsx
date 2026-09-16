@@ -41,6 +41,17 @@ type FinanceContextValue = {
   }) => Promise<void>;
   saveAccount: (input: Partial<Account> & { name: string }) => Promise<void>;
   saveCard: (input: Partial<CreditCard> & { name: string }) => Promise<CreditCard>;
+  updateCard: (id: string, patch: Partial<CreditCard>) => Promise<void>;
+  updateTransaction: (
+    id: string,
+    patch: Partial<Transaction> & { concept?: string; amount?: number },
+  ) => Promise<void>;
+  deleteTransaction: (id: string) => Promise<void>;
+  convertToInstallments: (
+    transactionId: string,
+    count: number,
+    amountIsTotal: boolean,
+  ) => Promise<void>;
   saveRecurring: (input: Partial<RecurringPayment> & { name: string; amount: number }) => Promise<void>;
   toggleRecurringPaid: (id: string, paid: boolean) => Promise<void>;
   updateProfile: (patch: Partial<Profile>) => Promise<void>;
@@ -287,6 +298,158 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     return data as CreditCard;
   };
 
+  const walletIdFor = (accountId?: string | null) =>
+    accountId ??
+    accounts.find((a) => !a.is_savings_box && a.kind === "caja_ahorro")?.id ??
+    accounts.find((a) => !a.is_savings_box)?.id ??
+    null;
+
+  const cashDelta = (tx: Pick<Transaction, "type" | "amount" | "payment_method">) => {
+    if (tx.payment_method === "tarjeta_credito") return 0;
+    return tx.type === "ingreso" ? Number(tx.amount) : -Number(tx.amount);
+  };
+
+  const applyWallet = async (accountId: string | null, delta: number) => {
+    if (!accountId || !delta) return;
+    const acc = accounts.find((a) => a.id === accountId);
+    if (!acc) return;
+    await supabase.from("accounts").update({ balance: Number(acc.balance) + delta }).eq("id", accountId);
+  };
+
+  const updateCard: FinanceContextValue["updateCard"] = async (id, patch) => {
+    const safe: Record<string, unknown> = {};
+    if (patch.name != null) safe.name = patch.name;
+    if (patch.closing_day != null) safe.closing_day = patch.closing_day;
+    if (patch.due_day != null) safe.due_day = patch.due_day;
+    if (patch.kind != null) safe.kind = patch.kind;
+    if (patch.parent_card_id !== undefined) safe.parent_card_id = patch.parent_card_id;
+    if (patch.last4 !== undefined) safe.last4 = patch.last4;
+    if (patch.credit_limit != null) safe.credit_limit = patch.credit_limit;
+    if (patch.available_limit != null) safe.available_limit = patch.available_limit;
+    if (patch.usd_tax_pct != null) safe.usd_tax_pct = patch.usd_tax_pct;
+    const { error } = await supabase.from("credit_cards").update(safe).eq("id", id);
+    if (error) throw error;
+    const card = cards.find((c) => c.id === id);
+    if (card?.kind === "principal" && (safe.closing_day != null || safe.due_day != null)) {
+      await supabase
+        .from("credit_cards")
+        .update({
+          closing_day: safe.closing_day ?? card.closing_day,
+          due_day: safe.due_day ?? card.due_day,
+        })
+        .eq("parent_card_id", id);
+    }
+    await refresh();
+  };
+
+  const updateTransaction: FinanceContextValue["updateTransaction"] = async (id, patch) => {
+    const current = transactions.find((t) => t.id === id);
+    if (!current) throw new Error("No se encontró el gasto");
+    if (current.id.startsWith("local-")) throw new Error("Ese movimiento todavía no se sincronizó");
+
+    const next: Transaction = {
+      ...current,
+      ...patch,
+      amount: patch.amount ?? current.amount,
+      concept: patch.concept ?? current.concept,
+    };
+    const oldCash = cashDelta(current);
+    const newCash = cashDelta(next);
+    const oldWallet = current.payment_method === "tarjeta_credito" ? null : current.account_id;
+    const newWallet = next.payment_method === "tarjeta_credito" ? null : walletIdFor(next.account_id);
+
+    const { error } = await supabase
+      .from("transactions")
+      .update({
+        type: next.type,
+        amount: next.amount,
+        currency: next.currency,
+        category_id: next.category_id,
+        account_id: newWallet,
+        credit_card_id: next.payment_method === "tarjeta_credito" ? next.credit_card_id : null,
+        concept: next.concept,
+        payment_method: next.payment_method,
+        occurred_on: next.occurred_on,
+        notes: next.notes,
+        installment_id: next.installment_id,
+        installment_number: next.installment_number,
+      })
+      .eq("id", id);
+    if (error) throw error;
+
+    if (oldWallet && newWallet && oldWallet === newWallet) {
+      await applyWallet(oldWallet, newCash - oldCash);
+    } else {
+      if (oldWallet && oldCash) await applyWallet(oldWallet, -oldCash);
+      if (newWallet && newCash) await applyWallet(newWallet, newCash);
+    }
+    await refresh();
+  };
+
+  const deleteTransaction: FinanceContextValue["deleteTransaction"] = async (id) => {
+    const current = transactions.find((t) => t.id === id);
+    if (!current) throw new Error("No se encontró el gasto");
+    if (current.id.startsWith("local-")) throw new Error("Ese movimiento todavía no se sincronizó");
+    const { error } = await supabase.from("transactions").delete().eq("id", id);
+    if (error) throw error;
+    const delta = cashDelta(current);
+    if (current.account_id && delta) await applyWallet(current.account_id, -delta);
+    await refresh();
+  };
+
+  const convertToInstallments: FinanceContextValue["convertToInstallments"] = async (
+    transactionId,
+    count,
+    amountIsTotal,
+  ) => {
+    const tx = transactions.find((t) => t.id === transactionId);
+    if (!tx) throw new Error("No se encontró el gasto");
+    if (tx.id.startsWith("local-")) throw new Error("Ese movimiento todavía no se sincronizó");
+    if (tx.payment_method !== "tarjeta_credito" || !tx.credit_card_id) {
+      throw new Error("Solo se pueden pasar a cuotas gastos de tarjeta");
+    }
+    if (tx.installment_id) throw new Error("Ese gasto ya está en cuotas");
+    if (count < 2) throw new Error("Mínimo 2 cuotas");
+
+    const total = amountIsTotal ? Number(tx.amount) : Number(tx.amount) * count;
+    const installmentAmount = amountIsTotal ? Number((total / count).toFixed(2)) : Number(tx.amount);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Sin sesión");
+
+    const { data, error } = await supabase
+      .from("installments")
+      .insert({
+        user_id: user.id,
+        credit_card_id: tx.credit_card_id,
+        concept: tx.concept,
+        currency: tx.currency,
+        total_amount: total,
+        installment_count: count,
+        installment_amount: installmentAmount,
+        start_date: tx.occurred_on,
+        current_installment: 1,
+      })
+      .select("*")
+      .single();
+    if (error) throw error;
+
+    const { error: txError } = await supabase
+      .from("transactions")
+      .update({
+        amount: installmentAmount,
+        installment_id: data.id,
+        installment_number: 1,
+        concept: `${tx.concept.replace(/\s*\(cuota \d+\/\d+\)\s*$/i, "")} (cuota 1/${count})`,
+        source: "cuota",
+      })
+      .eq("id", transactionId);
+    if (txError) throw txError;
+    await refresh();
+  };
+
   const saveRecurring: FinanceContextValue["saveRecurring"] = async (input) => {
     const {
       data: { user },
@@ -357,6 +520,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         saveInstallmentPurchase,
         saveAccount,
         saveCard,
+        updateCard,
+        updateTransaction,
+        deleteTransaction,
+        convertToInstallments,
         saveRecurring,
         toggleRecurringPaid,
         updateProfile,

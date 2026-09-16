@@ -56,5 +56,14 @@ export function isCashMethod(method: PaymentMethod) {
 
 export function categoryLabel(name: string) {
   if (name === "Alimentación") return "Comida";
+  if (name === "Supermercado") return "Comida";
   return name;
+}
+
+export function paymentMethodLabel(method: PaymentMethod) {
+  if (method === "efectivo") return "Efectivo";
+  if (method === "debito") return "Débito";
+  if (method === "transferencia") return "Transferencia";
+  if (method === "billetera") return "Mercado Pago";
+  return "Tarjeta";
 }

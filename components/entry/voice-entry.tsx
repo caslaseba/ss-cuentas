@@ -204,23 +204,29 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
               </Field>
               <Field label="Pago">
                 <Select value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-                  <option value="efectivo">Plata / débito</option>
+                  <option value="efectivo">Efectivo</option>
+                  <option value="billetera">Mercado Pago</option>
                   <option value="tarjeta_credito">Tarjeta</option>
                 </Select>
               </Field>
               {method === "tarjeta_credito" ? (
-                <Field label="Tarjeta" className="col-span-2">
-                  <Select value={cardId} onChange={(e) => setCardId(e.target.value)}>
-                    <option value="">Nueva Visa</option>
-                    {cards.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
+                <>
+                  <Field label="Tarjeta" className="col-span-2">
+                    <Select value={cardId} onChange={(e) => setCardId(e.target.value)}>
+                      <option value="">Nueva Visa</option>
+                      {cards.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.kind === "extension" ? `${c.name} · extensión` : c.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Cuotas">
+                    <Input value={cuotas} onChange={(e) => setCuotas(e.target.value)} inputMode="numeric" placeholder="1" />
+                  </Field>
+                </>
               ) : null}
-              <Field label="Fecha" className="col-span-2">
+              <Field label="Fecha" className={method === "tarjeta_credito" ? "" : "col-span-2"}>
                 <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
               </Field>
             </div>
