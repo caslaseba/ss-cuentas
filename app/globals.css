@@ -3,6 +3,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --app-zoom: 1;
+  color-scheme: light;
   --background: oklch(0.985 0.004 80);
   --foreground: oklch(0.22 0.03 160);
   --card: oklch(1 0 0);
@@ -23,6 +25,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.18 0.02 160);
   --foreground: oklch(0.96 0.01 80);
   --card: oklch(0.22 0.02 160);
@@ -67,4 +70,8 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+.app-zoom {
+  zoom: var(--app-zoom);
 }

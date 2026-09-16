@@ -44,6 +44,7 @@ export async function updateSession(request: NextRequest) {
 
   const isPublic =
     PUBLIC_PATHS.includes(path) ||
+    path.startsWith("/api/fx") ||
     path.startsWith("/icons") ||
     path.endsWith(".js") ||
     path.endsWith(".css") ||

@@ -20,7 +20,7 @@ export function formatMoney(
 export function toNumber(value: string | number | null | undefined) {
   if (typeof value === "number") return value;
   if (!value) return 0;
-  return Number(String(value).replace(",", ".")) || 0;
+  return Number(String(value).replace(/\./g, "").replace(",", ".")) || 0;
 }
 
 export function monthKey(date = new Date()) {

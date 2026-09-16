@@ -72,8 +72,7 @@ export function categoryTotals(
 ) {
   const buckets: Record<string, number> = {};
   for (const t of txs.filter((x) => x.type === "egreso")) {
-    const raw = categories.find((c) => c.id === t.category_id)?.name ?? "Otros";
-    const name = groupCategory(raw);
+    const name = categories.find((c) => c.id === t.category_id)?.name ?? "Sin categoría";
     buckets[name] = (buckets[name] ?? 0) + toArs(Number(t.amount), t.currency);
   }
   return Object.entries(buckets)

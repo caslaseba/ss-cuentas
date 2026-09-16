@@ -38,6 +38,15 @@ export function matchCategory(
 }
 
 export function matchCard(cards: CreditCard[], nameHint?: string | null, kindHint?: "principal" | "extension" | null) {
+  const papa = cards.find((c) => {
+    const n = c.name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    return /papa/.test(n);
+  });
+  if (kindHint === "extension" && papa) return papa;
+  if (nameHint && /papa|papi|extension|adicional/.test(nameHint.toLowerCase()) && papa) return papa;
   if (nameHint) {
     const needle = nameHint.toLowerCase();
     const byName = cards.find((c) => c.name.toLowerCase().includes(needle));

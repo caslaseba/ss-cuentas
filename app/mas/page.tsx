@@ -3,19 +3,32 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { RecurringEdit } from "@/components/entry/recurring-edit";
 import { CardManager } from "@/components/cards/card-manager";
+import { CategoryManager } from "@/components/categories/category-manager";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { ZoomToggle } from "@/components/layout/zoom-toggle";
 import { useFinance } from "@/components/providers/finance-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AmountInput } from "@/components/ui/amount-input";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { householdCards } from "@/lib/finance/cards";
+import { parseAmountInput } from "@/lib/finance/amount";
+import { isCardRecurring, withRecurringVia } from "@/lib/finance/recurring";
 import { formatMoney } from "@/lib/utils";
+import type { RecurringPayment } from "@/lib/types";
 
 export default function MasPage() {
-  const { recurring, saveRecurring, primaryAccount } = useFinance();
+  const { recurring, saveRecurring, primaryAccount, cards, transactions } = useFinance();
+  const { visible } = householdCards(cards, transactions);
   const [isAdmin, setIsAdmin] = useState(false);
   const [fixedName, setFixedName] = useState("");
   const [fixedAmount, setFixedAmount] = useState("");
   const [fixedDay, setFixedDay] = useState("10");
+  const [fixedPay, setFixedPay] = useState("plata");
+  const [editing, setEditing] = useState<RecurringPayment | null>(null);
 
   useEffect(() => {
     void fetch("/api/admin/me")
@@ -45,19 +58,36 @@ export default function MasPage() {
 
       <CardManager />
 
+      <CategoryManager />
+
       <Card>
         <CardHeader>
           <CardTitle>Servicios fijos</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {recurring.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Todavía no hay fijos. Agregá luz, internet, expensas…</p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Tocá uno para cambiar el monto, el día, si se debita de la Visa, o borrarlo.
+            </p>
+          )}
           {recurring.map((r) => (
-            <div key={r.id} className="flex justify-between text-sm">
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => setEditing(r)}
+              className="flex w-full items-center justify-between rounded-xl border border-border px-3 py-2 text-left text-sm"
+            >
               <span>
                 {r.name}{" "}
-                <span className="text-muted-foreground">· día {r.due_day}</span>
+                <span className="text-muted-foreground">
+                  · día {r.due_day}
+                  {isCardRecurring(r) ? " · Visa" : r.is_paid ? " · pagado" : ""}
+                </span>
               </span>
               <span className="font-medium">{formatMoney(Number(r.amount), r.currency)}</span>
-            </div>
+            </button>
           ))}
           <form
             className="grid grid-cols-3 gap-2"
@@ -65,14 +95,20 @@ export default function MasPage() {
               e.preventDefault();
               void saveRecurring({
                 name: fixedName,
-                amount: Number(fixedAmount),
+                amount: parseAmountInput(fixedAmount),
                 due_day: Number(fixedDay) || 10,
                 frequency: "mensual",
+                notes: withRecurringVia(null, fixedPay !== "plata", fixedPay !== "plata" && fixedPay !== "tarjeta" ? fixedPay : visible[0]?.id ?? null),
               })
                 .then(() => {
-                  toast.success("Servicio agregado. Lo ves en Hoy para marcarlo pagado.");
+                  toast.success(
+                    fixedPay === "plata"
+                      ? "Servicio agregado. Lo ves en Hoy para marcarlo pagado."
+                      : "Servicio de tarjeta agregado. Aparece en Hoy sin restar de tu plata.",
+                  );
                   setFixedName("");
                   setFixedAmount("");
+                  setFixedPay("plata");
                 })
                 .catch((err) => toast.error(err instanceof Error ? err.message : "Error"));
             }}
@@ -84,14 +120,34 @@ export default function MasPage() {
               placeholder="Luz, gas, internet…"
               required
             />
-            <Input value={fixedAmount} onChange={(e) => setFixedAmount(e.target.value)} placeholder="Monto" required />
+            <AmountInput value={fixedAmount} onChange={setFixedAmount} placeholder="Monto" required />
             <Input value={fixedDay} onChange={(e) => setFixedDay(e.target.value)} placeholder="Día" />
+            <Select
+              className="col-span-3"
+              value={fixedPay}
+              onChange={(e) => setFixedPay(e.target.value)}
+            >
+              <option value="plata">Lo pago yo</option>
+              {visible.map((c) => (
+                <option key={c.id} value={c.id}>
+                  Se debita de {c.name}
+                </option>
+              ))}
+            </Select>
             <Button type="submit">Agregar</Button>
           </form>
         </CardContent>
       </Card>
 
       <div className="flex flex-col gap-2 pb-4">
+        <div className="flex items-center justify-between rounded-xl border border-border px-3 py-2">
+          <p className="text-sm">Vista</p>
+          <ThemeToggle />
+        </div>
+        <div className="flex items-center justify-between rounded-xl border border-border px-3 py-2">
+          <p className="text-sm">Tamaño</p>
+          <ZoomToggle />
+        </div>
         <Button asChild variant="outline">
           <Link href="/configuracion">Ajustes y contraseña</Link>
         </Button>
@@ -101,6 +157,8 @@ export default function MasPage() {
           </Button>
         ) : null}
       </div>
+
+      <RecurringEdit item={editing} open={Boolean(editing)} onOpenChange={(v) => !v && setEditing(null)} />
     </div>
   );
 }

@@ -4,6 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { enqueueOutbox, readOutbox, removeOutbox } from "@/lib/offline/sync";
+import { DAD_CARD_NAME, MY_CARD_NAME, householdCards, isPapaCard } from "@/lib/finance/cards";
+import { cleanConceptName, findRecurringByName, isCardRecurring, withRecurringVia } from "@/lib/finance/recurring";
 import { isoDate, monthKey } from "@/lib/utils";
 import type {
   Account,
@@ -33,11 +35,13 @@ type FinanceContextValue = {
     totalAmount?: number;
     installmentAmount: number;
     count: number;
+    current?: number;
     currency: Transaction["currency"];
     credit_card_id: string;
     category_id?: string | null;
     occurred_on: string;
     source?: Transaction["source"];
+    notes?: string | null;
   }) => Promise<void>;
   saveAccount: (input: Partial<Account> & { name: string }) => Promise<void>;
   saveCard: (input: Partial<CreditCard> & { name: string }) => Promise<CreditCard>;
@@ -51,10 +55,36 @@ type FinanceContextValue = {
     transactionId: string,
     count: number,
     amountIsTotal: boolean,
+    current?: number,
+  ) => Promise<void>;
+  updateInstallment: (
+    id: string,
+    patch: {
+      current_installment?: number;
+      installment_count?: number;
+      installment_amount?: number;
+    },
   ) => Promise<void>;
   saveRecurring: (input: Partial<RecurringPayment> & { name: string; amount: number }) => Promise<void>;
+  updateRecurring: (
+    id: string,
+    patch: Partial<Pick<RecurringPayment, "name" | "amount" | "due_day" | "currency" | "category_id" | "notes">>,
+  ) => Promise<void>;
+  deleteRecurring: (id: string) => Promise<void>;
   toggleRecurringPaid: (id: string, paid: boolean) => Promise<void>;
+  linkCardService: (input: {
+    name: string;
+    matchName?: string;
+    amount: number;
+    currency?: RecurringPayment["currency"];
+    credit_card_id: string;
+    category_id?: string | null;
+  }) => Promise<void>;
+  unlinkCardService: (name: string) => Promise<void>;
   updateProfile: (patch: Partial<Profile>) => Promise<void>;
+  saveCategory: (input: { name: string; type: Category["type"] }) => Promise<void>;
+  updateCategory: (id: string, patch: { name: string }) => Promise<void>;
+  deleteCategory: (id: string) => Promise<void>;
   updateCategoryLimit: (id: string, monthly_limit: number | null) => Promise<void>;
 };
 
@@ -73,52 +103,84 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [recurring, setRecurring] = useState<RecurringPayment[]>([]);
 
   const refresh = useCallback(async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const [p, c, a, cc, t, i, r] = await Promise.all([
+        supabase.from("profiles").select("*").eq("id", user.id).single(),
+        supabase.from("categories").select("*").eq("user_id", user.id).order("name"),
+        supabase.from("accounts").select("*").eq("user_id", user.id).order("name"),
+        supabase.from("credit_cards").select("*").eq("user_id", user.id).order("name"),
+        supabase
+          .from("transactions")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("occurred_on", { ascending: false })
+          .limit(800),
+        supabase.from("installments").select("*").eq("user_id", user.id).order("start_date", { ascending: false }),
+        supabase.from("recurring_payments").select("*").eq("user_id", user.id).order("due_day"),
+      ]);
+
+      if (p.data) setProfile(p.data as Profile);
+      let cats = (c.data ?? []) as Category[];
+      if (!cats.some((x) => x.name === "Cigarrillos" && x.type === "egreso")) {
+        const { data: created } = await supabase
+          .from("categories")
+          .insert({
+            user_id: user.id,
+            name: "Cigarrillos",
+            type: "egreso",
+            icon: "cigarette",
+            is_default: true,
+          })
+          .select("*")
+          .single();
+        if (created) cats = [...cats, created as Category];
+      }
+      setCategories(cats);
+      if (a.data) setAccounts(a.data as Account[]);
+      if (cc.data) setCards(cc.data as CreditCard[]);
+      if (t.data) setTransactions(t.data as Transaction[]);
+      if (i.data) setInstallments(i.data as Installment[]);
+      if (r.data) setRecurring(r.data as RecurringPayment[]);
+
+      const loadedCards = (cc.data ?? []) as CreditCard[];
+      const loadedTx = (t.data ?? []) as Transaction[];
+      const { mine, papa } = householdCards(loadedCards, loadedTx);
+      if (mine && mine.name !== MY_CARD_NAME) {
+        await supabase.from("credit_cards").update({ name: MY_CARD_NAME }).eq("id", mine.id);
+        setCards((prev) => prev.map((c) => (c.id === mine.id ? { ...c, name: MY_CARD_NAME } : c)));
+      }
+      if (papa && papa.name !== DAD_CARD_NAME) {
+        await supabase.from("credit_cards").update({ name: DAD_CARD_NAME }).eq("id", papa.id);
+        setCards((prev) => prev.map((c) => (c.id === papa.id ? { ...c, name: DAD_CARD_NAME } : c)));
+      }
+      if (mine && !papa && !loadedCards.some((c) => isPapaCard(c))) {
+        const { data: createdPapa } = await supabase
+          .from("credit_cards")
+          .insert({
+            user_id: user.id,
+            name: DAD_CARD_NAME,
+            kind: "extension",
+            parent_card_id: mine.id,
+            closing_day: mine.closing_day,
+            due_day: mine.due_day,
+            credit_limit: 0,
+            available_limit: 0,
+            usd_tax_pct: 0,
+          })
+          .select("*")
+          .single();
+        if (createdPapa) setCards((prev) => [...prev, createdPapa as CreditCard]);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudieron cargar los datos.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const [p, c, a, cc, t, i, r] = await Promise.all([
-      supabase.from("profiles").select("*").eq("id", user.id).single(),
-      supabase.from("categories").select("*").eq("user_id", user.id).order("name"),
-      supabase.from("accounts").select("*").eq("user_id", user.id).order("name"),
-      supabase.from("credit_cards").select("*").eq("user_id", user.id).order("name"),
-      supabase
-        .from("transactions")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("occurred_on", { ascending: false })
-        .limit(800),
-      supabase.from("installments").select("*").eq("user_id", user.id).order("start_date", { ascending: false }),
-      supabase.from("recurring_payments").select("*").eq("user_id", user.id).order("due_day"),
-    ]);
-
-    if (p.data) setProfile(p.data as Profile);
-    let cats = (c.data ?? []) as Category[];
-    if (!cats.some((x) => x.name === "Cigarrillos" && x.type === "egreso")) {
-      const { data: created } = await supabase
-        .from("categories")
-        .insert({
-          user_id: user.id,
-          name: "Cigarrillos",
-          type: "egreso",
-          icon: "cigarette",
-          is_default: true,
-        })
-        .select("*")
-        .single();
-      if (created) cats = [...cats, created as Category];
-    }
-    setCategories(cats);
-    if (a.data) setAccounts(a.data as Account[]);
-    if (cc.data) setCards(cc.data as CreditCard[]);
-    if (t.data) setTransactions(t.data as Transaction[]);
-    if (i.data) setInstallments(i.data as Installment[]);
-    if (r.data) setRecurring(r.data as RecurringPayment[]);
-    setLoading(false);
   }, [supabase]);
 
   const flushOutbox = useCallback(async () => {
@@ -220,6 +282,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
     const installmentAmount = input.installmentAmount;
     const total = input.totalAmount ?? installmentAmount * input.count;
+    const current = Math.min(Math.max(input.current ?? 1, 1), input.count);
 
     const { data, error } = await supabase
       .from("installments")
@@ -232,7 +295,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         installment_count: input.count,
         installment_amount: installmentAmount,
         start_date: input.occurred_on,
-        current_installment: 1,
+        current_installment: current,
       })
       .select("*")
       .single();
@@ -243,14 +306,15 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       type: "egreso",
       amount: installmentAmount,
       currency: input.currency,
-      concept: `${input.concept} (cuota 1/${input.count})`,
+      concept: `${input.concept} (cuota ${current}/${input.count})`,
       payment_method: "tarjeta_credito",
       credit_card_id: input.credit_card_id,
       category_id: input.category_id ?? null,
       occurred_on: input.occurred_on,
       installment_id: data.id,
-      installment_number: 1,
+      installment_number: current,
       source: input.source ?? "cuota",
+      notes: input.notes ?? null,
     });
   };
 
@@ -401,6 +465,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     transactionId,
     count,
     amountIsTotal,
+    current = 1,
   ) => {
     const tx = transactions.find((t) => t.id === transactionId);
     if (!tx) throw new Error("No se encontró el gasto");
@@ -410,6 +475,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     }
     if (tx.installment_id) throw new Error("Ese gasto ya está en cuotas");
     if (count < 2) throw new Error("Mínimo 2 cuotas");
+    const currentN = Math.min(Math.max(current, 1), count);
 
     const total = amountIsTotal ? Number(tx.amount) : Number(tx.amount) * count;
     const installmentAmount = amountIsTotal ? Number((total / count).toFixed(2)) : Number(tx.amount);
@@ -430,7 +496,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         installment_count: count,
         installment_amount: installmentAmount,
         start_date: tx.occurred_on,
-        current_installment: 1,
+        current_installment: currentN,
       })
       .select("*")
       .single();
@@ -441,12 +507,47 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       .update({
         amount: installmentAmount,
         installment_id: data.id,
-        installment_number: 1,
-        concept: `${tx.concept.replace(/\s*\(cuota \d+\/\d+\)\s*$/i, "")} (cuota 1/${count})`,
+        installment_number: currentN,
+        concept: `${tx.concept.replace(/\s*\(cuota \d+\/\d+\)\s*$/i, "")} (cuota ${currentN}/${count})`,
         source: "cuota",
       })
       .eq("id", transactionId);
     if (txError) throw txError;
+    await refresh();
+  };
+
+  const updateInstallment: FinanceContextValue["updateInstallment"] = async (id, patch) => {
+    const plan = installments.find((i) => i.id === id);
+    if (!plan) throw new Error("No se encontró el plan de cuotas");
+    const current = Math.min(
+      Math.max(patch.current_installment ?? plan.current_installment, 1),
+      patch.installment_count ?? plan.installment_count,
+    );
+    const count = Math.max(patch.installment_count ?? plan.installment_count, current);
+    const amount = patch.installment_amount ?? plan.installment_amount;
+    const { error } = await supabase
+      .from("installments")
+      .update({
+        current_installment: current,
+        installment_count: count,
+        installment_amount: amount,
+        total_amount: amount * count,
+      })
+      .eq("id", id);
+    if (error) throw error;
+
+    const linked = transactions.find((t) => t.installment_id === id);
+    if (linked) {
+      const base = linked.concept.replace(/\s*\(cuota \d+\/\d+\)\s*$/i, "");
+      await supabase
+        .from("transactions")
+        .update({
+          amount,
+          installment_number: current,
+          concept: `${base} (cuota ${current}/${count})`,
+        })
+        .eq("id", linked.id);
+    }
     await refresh();
   };
 
@@ -465,7 +566,32 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       is_paid: false,
       category_id: input.category_id ?? null,
       account_id: input.account_id ?? null,
+      notes: input.notes ?? null,
     });
+    if (error) throw error;
+    await refresh();
+  };
+
+  const updateRecurring: FinanceContextValue["updateRecurring"] = async (id, patch) => {
+    const current = recurring.find((r) => r.id === id);
+    if (!current) throw new Error("No se encontró el gasto fijo");
+    const { error } = await supabase
+      .from("recurring_payments")
+      .update({
+        name: patch.name ?? current.name,
+        amount: patch.amount ?? current.amount,
+        due_day: patch.due_day ?? current.due_day,
+        currency: patch.currency ?? current.currency,
+        category_id: patch.category_id === undefined ? current.category_id : patch.category_id,
+        notes: patch.notes === undefined ? current.notes : patch.notes,
+      })
+      .eq("id", id);
+    if (error) throw error;
+    await refresh();
+  };
+
+  const deleteRecurring: FinanceContextValue["deleteRecurring"] = async (id) => {
+    const { error } = await supabase.from("recurring_payments").delete().eq("id", id);
     if (error) throw error;
     await refresh();
   };
@@ -482,6 +608,37 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     await refresh();
   };
 
+  const linkCardService: FinanceContextValue["linkCardService"] = async (input) => {
+    const cleaned = cleanConceptName(input.name);
+    if (!cleaned) return;
+    const existing = findRecurringByName(recurring, input.matchName ?? cleaned);
+    const notes = withRecurringVia(existing?.notes, true, input.credit_card_id);
+    if (existing) {
+      await updateRecurring(existing.id, {
+        name: cleaned,
+        amount: input.amount,
+        currency: input.currency ?? existing.currency,
+        category_id: input.category_id === undefined ? existing.category_id : input.category_id,
+        notes,
+      });
+      return;
+    }
+    await saveRecurring({
+      name: cleaned,
+      amount: input.amount,
+      currency: input.currency ?? "ARS",
+      due_day: Math.min(28, Math.max(1, new Date().getDate())),
+      category_id: input.category_id ?? null,
+      notes,
+    });
+  };
+
+  const unlinkCardService: FinanceContextValue["unlinkCardService"] = async (name) => {
+    const existing = findRecurringByName(recurring, name);
+    if (!existing || !isCardRecurring(existing)) return;
+    await deleteRecurring(existing.id);
+  };
+
   const updateProfile = async (patch: Partial<Profile>) => {
     if (!profile) return;
     const { id: _id, role: _role, ...safe } = patch;
@@ -492,6 +649,48 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
   const updateCategoryLimit = async (id: string, monthly_limit: number | null) => {
     const { error } = await supabase.from("categories").update({ monthly_limit }).eq("id", id);
+    if (error) throw error;
+    await refresh();
+  };
+
+  const saveCategory: FinanceContextValue["saveCategory"] = async (input) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Sin sesión");
+    const name = input.name.trim();
+    if (!name) throw new Error("Poné un nombre de categoría");
+    const { error } = await supabase.from("categories").insert({
+      user_id: user.id,
+      name,
+      type: input.type,
+      icon: "tag",
+      is_default: false,
+    });
+    if (error) {
+      if (error.message.toLowerCase().includes("duplicate") || error.code === "23505") {
+        throw new Error("Esa categoría ya existe");
+      }
+      throw error;
+    }
+    await refresh();
+  };
+
+  const updateCategory: FinanceContextValue["updateCategory"] = async (id, patch) => {
+    const name = patch.name.trim();
+    if (!name) throw new Error("Poné un nombre de categoría");
+    const { error } = await supabase.from("categories").update({ name }).eq("id", id);
+    if (error) {
+      if (error.message.toLowerCase().includes("duplicate") || error.code === "23505") {
+        throw new Error("Esa categoría ya existe");
+      }
+      throw error;
+    }
+    await refresh();
+  };
+
+  const deleteCategory: FinanceContextValue["deleteCategory"] = async (id) => {
+    const { error } = await supabase.from("categories").delete().eq("id", id);
     if (error) throw error;
     await refresh();
   };
@@ -524,9 +723,17 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         updateTransaction,
         deleteTransaction,
         convertToInstallments,
+        updateInstallment,
         saveRecurring,
+        updateRecurring,
+        deleteRecurring,
         toggleRecurringPaid,
+        linkCardService,
+        unlinkCardService,
         updateProfile,
+        saveCategory,
+        updateCategory,
+        deleteCategory,
         updateCategoryLimit,
       }}
     >

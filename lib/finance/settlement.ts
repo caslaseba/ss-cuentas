@@ -20,6 +20,18 @@ function dateWithDay(year: number, monthIndex: number, day: number) {
  * si el cierre es el día C, el período vigente va del (C+1) del mes anterior
  * hasta el día C del mes actual.
  */
+/** Ciclo que cierra en el mes de `month` (el resumen que se paga ese mes). */
+export function statementRefForMonth(card: Pick<CreditCard, "closing_day">, month: Date) {
+  const y = month.getFullYear();
+  const m = month.getMonth();
+  const closing = Math.min(card.closing_day, lastDayOfMonth(y, m));
+  return new Date(y, m, closing, 12, 0, 0, 0);
+}
+
+export function isCycleClosed(cycle: BillingCycle, ref = new Date()) {
+  return ref.getTime() > cycle.end.getTime();
+}
+
 export function getBillingCycle(card: Pick<CreditCard, "closing_day">, ref = new Date()): BillingCycle {
   const closing = card.closing_day;
   const y = ref.getFullYear();
@@ -165,16 +177,24 @@ export function dueMessage(schedule: ReturnType<typeof cardSchedule>) {
 }
 
 export function planProgress(plan: Installment, ref = new Date()) {
-  const start = new Date(`${plan.start_date}T12:00:00`);
-  const elapsed =
-    (ref.getFullYear() - start.getFullYear()) * 12 + (ref.getMonth() - start.getMonth());
-  const current = Math.min(Math.max(elapsed + 1, 1), plan.installment_count);
+  const stored = Number(plan.current_installment);
+  let current: number;
+  if (Number.isFinite(stored) && stored >= 1) {
+    current = Math.min(Math.max(Math.round(stored), 1), plan.installment_count);
+  } else {
+    const start = new Date(`${plan.start_date}T12:00:00`);
+    const elapsed =
+      (ref.getFullYear() - start.getFullYear()) * 12 + (ref.getMonth() - start.getMonth());
+    current = Math.min(Math.max(elapsed + 1, 1), plan.installment_count);
+  }
   const remainingAfterThis = Math.max(0, plan.installment_count - current);
   return {
     current,
     remainingAfterThis,
     isLast: current >= plan.installment_count,
     total: plan.installment_count,
+    remainingAmount: remainingAfterThis * Number(plan.installment_amount),
+    endsOn: addMonths(new Date(ref.getFullYear(), ref.getMonth(), 1), remainingAfterThis),
   };
 }
 
@@ -213,7 +233,7 @@ export function summarizeCard(
     else ars += slot.amount;
   }
 
-  const taxPct = Number(cycleCard.usd_tax_pct) || Number(profile.tax_surcharge_pct) || 0;
+  const taxPct = Number(cycleCard.usd_tax_pct) || 0;
   const usdLocal = usdToLocal(usd, Number(profile.usd_exchange_rate), taxPct);
 
   const projected = relatedPlans
@@ -251,6 +271,8 @@ export function summarizeCard(
     byCard,
   };
 }
+
+export type CardSummary = ReturnType<typeof summarizeCard>;
 
 export function budgetTone(spent: number, limit: number | null) {
   if (!limit || limit <= 0) return "neutral" as const;

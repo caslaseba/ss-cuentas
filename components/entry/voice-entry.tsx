@@ -10,18 +10,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { AmountInput } from "@/components/ui/amount-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { useFinance } from "@/components/providers/finance-provider";
 import { useSpeechToText } from "@/hooks/use-speech";
+import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
+import { householdCards } from "@/lib/finance/cards";
 import { matchCard, matchCategory, categoryLabel } from "@/lib/finance/match";
 import { parseVoiceCommand, VOICE_EXAMPLES } from "@/lib/parsers/voice-parser";
+import { withObservation } from "@/lib/finance/tx-notes";
 import { formatMoney, isoDate } from "@/lib/utils";
 import type { CurrencyCode, PaymentMethod, TransactionType } from "@/lib/types";
 
 export function VoiceEntry({ compact = false }: { compact?: boolean }) {
-  const { categories, cards, saveTransaction, saveInstallmentPurchase, saveCard } = useFinance();
+  const { categories, cards, transactions, saveTransaction, saveInstallmentPurchase, saveCard } = useFinance();
+  const { mine, visible } = householdCards(cards, transactions);
   const speech = useSpeechToText();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState(false);
@@ -38,17 +44,21 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
   const [categoryId, setCategoryId] = useState("");
   const [cardId, setCardId] = useState("");
   const [cuotas, setCuotas] = useState("");
+  const [enCuotas, setEnCuotas] = useState(false);
   const [date, setDate] = useState(isoDate(new Date()));
+  const [observation, setObservation] = useState("");
 
   useEffect(() => {
     if (!parsed) return;
     setType(parsed.type);
-    setAmount(parsed.amount ? String(parsed.amount) : "");
+    setAmount(parsed.amount ? formatAmountFromNumber(parsed.amount) : "");
     setCurrency(parsed.currency);
     setConcept(parsed.concept);
     setMethod(parsed.paymentMethod);
     setCuotas(parsed.installmentCount ? String(parsed.installmentCount) : "");
-    const card = matchCard(cards, parsed.cardNameHint, parsed.cardHint);
+    setEnCuotas(Boolean(parsed.installmentCount && parsed.installmentCount >= 2));
+    const { visible: household } = householdCards(cards, transactions);
+    const card = matchCard(household.length ? household : cards, parsed.cardNameHint, parsed.cardHint);
     if (card) {
       setCardId(card.id);
       setMethod("tarjeta_credito");
@@ -56,35 +66,33 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
     const cat = matchCategory(categories, parsed.type, parsed.concept, parsed.categoryHint);
     if (cat) setCategoryId(cat.id);
     setEdit(parsed.confidence === "baja");
-  }, [parsed, cards, categories]);
+  }, [parsed, cards, categories, transactions]);
 
   const categoryName = categories.find((c) => c.id === categoryId)?.name;
-  const cardName = cards.find((c) => c.id === cardId)?.name;
-  const amountN = Number(amount) || 0;
+  const cardName = visible.find((c) => c.id === cardId)?.name ?? cards.find((c) => c.id === cardId)?.name;
+  const amountN = parseAmountInput(amount);
 
   async function confirm() {
     try {
-      const n = Number(amount);
+      const n = amountN;
       if (!concept || !n) {
         toast.error("Faltan concepto o monto.");
         setEdit(true);
         return;
       }
-      let resolvedCardId = cardId;
+      const notes = withObservation(null, observation);
+      let resolvedCardId = cardId || mine?.id || "";
       if (method === "tarjeta_credito" && !resolvedCardId) {
-        const brand = parsed?.cardNameHint || "Visa";
-        const pretty = brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase();
         const created = await saveCard({
-          name: pretty,
+          name: "Visa ICBC",
           kind: "principal",
-          closing_day: 10,
-          due_day: 20,
+          closing_day: 1,
+          due_day: 14,
         });
         resolvedCardId = created.id;
-        toast.message(`${pretty} agregada. Podés cambiar el cierre en Más.`);
       }
-      const cuotaN = Number(cuotas);
-      if (cuotaN >= 2 && resolvedCardId) {
+      const cuotaN = enCuotas ? Number(cuotas) : 0;
+      if (method === "tarjeta_credito" && cuotaN >= 2 && resolvedCardId) {
         await saveInstallmentPurchase({
           concept,
           installmentAmount: n,
@@ -94,6 +102,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
           category_id: categoryId || null,
           occurred_on: date,
           source: "voz",
+          notes,
         });
       } else {
         await saveTransaction({
@@ -106,10 +115,12 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
           credit_card_id: method === "tarjeta_credito" ? resolvedCardId || null : null,
           occurred_on: date,
           source: "voz",
+          notes,
         });
       }
       toast.success(type === "ingreso" ? "Cobro sumado a tu cuenta" : method === "tarjeta_credito" ? "Sumado a la tarjeta" : "Descontado de tu plata");
       setOpen(false);
+      setObservation("");
       speech.setTranscript("");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No se pudo guardar");
@@ -185,7 +196,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
                 </Select>
               </Field>
               <Field label="Monto">
-                <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+                <AmountInput value={amount} onChange={setAmount} />
               </Field>
               <Field label="Qué fue" className="col-span-2">
                 <Input value={concept} onChange={(e) => setConcept(e.target.value)} />
@@ -213,24 +224,45 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
                 <>
                   <Field label="Tarjeta" className="col-span-2">
                     <Select value={cardId} onChange={(e) => setCardId(e.target.value)}>
-                      <option value="">Nueva Visa</option>
-                      {cards.map((c) => (
+                      {visible.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.kind === "extension" ? `${c.name} · extensión` : c.name}
                         </option>
                       ))}
                     </Select>
                   </Field>
-                  <Field label="Cuotas">
-                    <Input value={cuotas} onChange={(e) => setCuotas(e.target.value)} inputMode="numeric" placeholder="1" />
-                  </Field>
+                  <label className="col-span-2 flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-violet-700"
+                      checked={enCuotas}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setEnCuotas(on);
+                        if (!on) setCuotas("");
+                      }}
+                    />
+                    Va en cuotas
+                  </label>
+                  {enCuotas ? (
+                    <Field label="Cuotas">
+                      <Input value={cuotas} onChange={(e) => setCuotas(e.target.value)} inputMode="numeric" placeholder="Ej 12" />
+                    </Field>
+                  ) : null}
                 </>
               ) : null}
-              <Field label="Fecha" className={method === "tarjeta_credito" ? "" : "col-span-2"}>
+              <Field label="Fecha" className={method === "tarjeta_credito" && enCuotas ? "" : "col-span-2"}>
                 <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
               </Field>
             </div>
           ) : null}
+
+          <Textarea
+            className="mt-3 min-h-16"
+            value={observation}
+            onChange={(e) => setObservation(e.target.value)}
+            placeholder="Observación (opcional)"
+          />
 
           <div className="mt-4 flex flex-col gap-2">
             <Button className="h-12 text-base" onClick={() => void confirm()}>

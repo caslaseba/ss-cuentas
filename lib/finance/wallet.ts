@@ -1,5 +1,7 @@
 import { parseISO } from "date-fns";
 import { isCashMethod } from "@/lib/finance/match";
+import { notesHasLine } from "@/lib/finance/tx-notes";
+import { monthKey } from "@/lib/utils";
 import type { Transaction } from "@/lib/types";
 
 export function inCurrentMonth(dateStr: string, ref = new Date()) {
@@ -49,4 +51,19 @@ export function methodBreakdown(
   return Object.entries(buckets)
     .sort((a, b) => b[1] - a[1])
     .map(([name, amount]) => ({ name, amount }));
+}
+
+export function shiftMonth(date: Date, delta: number) {
+  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
+
+export function carryOverNote(fromMonth: Date) {
+  return `sobra:${monthKey(fromMonth)}`;
+}
+
+export function hasCarryOver(transactions: Transaction[], intoMonth: Date) {
+  const note = carryOverNote(shiftMonth(intoMonth, -1));
+  return transactions.some(
+    (t) => t.type === "ingreso" && notesHasLine(t.notes, note) && inCurrentMonth(t.occurred_on, intoMonth),
+  );
 }
