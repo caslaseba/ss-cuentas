@@ -34,7 +34,7 @@ function ThemedToaster() {
 function ShellInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { online, loading } = useFinance();
+  const { online, loading, pendingSync } = useFinance();
 
   async function logout() {
     const supabase = createClient();
@@ -49,6 +49,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           <p className="truncate font-semibold">SS Cuentas</p>
           <p className="text-[11px] text-muted-foreground">
             {online ? "En línea" : "Sin señal · se actualiza al volver"}
+            {pendingSync > 0 ? ` · ${pendingSync} pendiente${pendingSync === 1 ? "" : "s"}` : ""}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
@@ -68,7 +69,24 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               Estás offline. Lo que cargues se sube cuando vuelvas a tener internet.
             </div>
           )}
-          {loading ? <p className="text-sm text-muted-foreground">Cargando…</p> : children}
+          {online && pendingSync > 0 && (
+            <div className="mb-4 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-sm">
+              Hay {pendingSync} movimiento{pendingSync === 1 ? "" : "s"} guardado{pendingSync === 1 ? "" : "s"} en este
+              aparato, subiendo ahora.
+            </div>
+          )}
+          {loading ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Cargando tus cuentas… la primera vez arma el programa y después entra más rápido.
+              </p>
+              <div className="h-24 animate-pulse rounded-2xl bg-muted" />
+              <div className="h-40 animate-pulse rounded-2xl bg-muted" />
+              <div className="h-40 animate-pulse rounded-2xl bg-muted" />
+            </div>
+          ) : (
+            children
+          )}
         </div>
       </main>
 

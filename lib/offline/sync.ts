@@ -43,7 +43,7 @@ export async function readOutbox(): Promise<OutboxItem[]> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readonly");
     const req = tx.objectStore(STORE).getAll();
-    req.onsuccess = () => resolve(req.result as OutboxItem[]);
+    req.onsuccess = () => resolve((req.result as OutboxItem[]).sort((a, b) => a.createdAt - b.createdAt));
     req.onerror = () => reject(req.error);
   });
 }

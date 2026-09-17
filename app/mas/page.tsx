@@ -18,6 +18,7 @@ import { householdCards } from "@/lib/finance/cards";
 import { parseAmountInput } from "@/lib/finance/amount";
 import { isCardRecurring, withRecurringVia } from "@/lib/finance/recurring";
 import { formatMoney } from "@/lib/utils";
+import { InstallApp } from "@/components/pwa/install-app";
 import type { RecurringPayment } from "@/lib/types";
 
 export default function MasPage() {
@@ -139,6 +140,15 @@ export default function MasPage() {
             </Select>
             <Button type="submit">Agregar</Button>
           </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Usar en el celular o en cualquier PC</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <InstallApp />
         </CardContent>
       </Card>
 

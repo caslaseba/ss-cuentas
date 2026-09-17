@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { normalizeSupabaseUrl } from "@/lib/supabase/env";
+import { withTimeout } from "@/lib/async";
 
 const PUBLIC_PATHS = ["/", "/login", "/register", "/offline", "/recuperar", "/manifest.webmanifest"];
 
@@ -35,10 +36,12 @@ export async function updateSession(request: NextRequest) {
   });
 
   let user = null;
+  const hasSessionCookie = request.cookies.getAll().some((c) => c.name.includes("-auth-token"));
   try {
-    const { data } = await supabase.auth.getUser();
+    const { data } = await withTimeout(supabase.auth.getUser(), 8000);
     user = data.user;
   } catch {
+    if (hasSessionCookie) return supabaseResponse;
     user = null;
   }
 

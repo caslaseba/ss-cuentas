@@ -4,8 +4,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { enqueueOutbox, readOutbox, removeOutbox } from "@/lib/offline/sync";
+import { applyOutboxToSnapshot, readFinanceSnapshot, writeFinanceSnapshot } from "@/lib/offline/snapshot";
 import { DAD_CARD_NAME, MY_CARD_NAME, householdCards, isPapaCard } from "@/lib/finance/cards";
 import { cleanConceptName, findRecurringByName, isCardRecurring, withRecurringVia } from "@/lib/finance/recurring";
+import { withTimeout } from "@/lib/async";
 import { isoDate, monthKey } from "@/lib/utils";
 import type {
   Account,
@@ -20,6 +22,7 @@ import type {
 type FinanceContextValue = {
   loading: boolean;
   online: boolean;
+  pendingSync: number;
   profile: Profile | null;
   categories: Category[];
   accounts: Account[];
@@ -94,6 +97,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const supabase = useMemo(() => createClient(), []);
   const [loading, setLoading] = useState(true);
   const [online, setOnline] = useState(true);
+  const [pendingSync, setPendingSync] = useState(0);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -102,14 +106,49 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [recurring, setRecurring] = useState<RecurringPayment[]>([]);
 
+  const loadCached = useCallback(async (userId?: string) => {
+    const pending = await readOutbox().catch(() => []);
+    setPendingSync(pending.length);
+    const cached = readFinanceSnapshot(userId);
+    if (!cached) return null;
+    const merged = applyOutboxToSnapshot(cached, pending);
+    setProfile(merged.profile);
+    setCategories(merged.categories);
+    setAccounts(merged.accounts);
+    setCards(merged.cards);
+    setTransactions(merged.transactions);
+    setInstallments(merged.installments);
+    setRecurring(merged.recurring);
+    setLoading(false);
+    return merged;
+  }, []);
+
+  const currentUser = useCallback(async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.user) return sessionData.session.user;
+    if (typeof navigator !== "undefined" && !navigator.onLine) return null;
+    try {
+      const { data } = await withTimeout(supabase.auth.getUser(), 8000);
+      return data.user;
+    } catch {
+      return null;
+    }
+  }, [supabase]);
+
   const refresh = useCallback(async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
+      const user = await currentUser();
+      const cached = await loadCached(user?.id);
 
-      const [p, c, a, cc, t, i, r] = await Promise.all([
+      if (!user) {
+        if (!cached) setLoading(false);
+        return;
+      }
+
+      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+
+      const [p, c, a, cc, t, i, r] = await withTimeout(
+        Promise.all([
         supabase.from("profiles").select("*").eq("id", user.id).single(),
         supabase.from("categories").select("*").eq("user_id", user.id).order("name"),
         supabase.from("accounts").select("*").eq("user_id", user.id).order("name"),
@@ -122,7 +161,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
           .limit(800),
         supabase.from("installments").select("*").eq("user_id", user.id).order("start_date", { ascending: false }),
         supabase.from("recurring_payments").select("*").eq("user_id", user.id).order("due_day"),
-      ]);
+      ]),
+        15000,
+      );
 
       if (p.data) setProfile(p.data as Profile);
       let cats = (c.data ?? []) as Category[];
@@ -146,6 +187,37 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       if (t.data) setTransactions(t.data as Transaction[]);
       if (i.data) setInstallments(i.data as Installment[]);
       if (r.data) setRecurring(r.data as RecurringPayment[]);
+      writeFinanceSnapshot({
+        userId: user.id,
+        profile: (p.data as Profile | null) ?? cached?.profile ?? null,
+        categories: cats,
+        accounts: (a.data as Account[]) ?? cached?.accounts ?? [],
+        cards: (cc.data as CreditCard[]) ?? cached?.cards ?? [],
+        transactions: (t.data as Transaction[]) ?? cached?.transactions ?? [],
+        installments: (i.data as Installment[]) ?? cached?.installments ?? [],
+        recurring: (r.data as RecurringPayment[]) ?? cached?.recurring ?? [],
+      });
+      const pending = await readOutbox().catch(() => []);
+      if (pending.length) {
+        const merged = applyOutboxToSnapshot(
+          {
+            userId: user.id,
+            profile: (p.data as Profile | null) ?? cached?.profile ?? null,
+            categories: cats,
+            accounts: (a.data as Account[]) ?? cached?.accounts ?? [],
+            cards: (cc.data as CreditCard[]) ?? cached?.cards ?? [],
+            transactions: (t.data as Transaction[]) ?? cached?.transactions ?? [],
+            installments: (i.data as Installment[]) ?? cached?.installments ?? [],
+            recurring: (r.data as RecurringPayment[]) ?? cached?.recurring ?? [],
+          },
+          pending,
+        );
+        setAccounts(merged.accounts);
+        setTransactions(merged.transactions);
+        setPendingSync(pending.length);
+      } else {
+        setPendingSync(0);
+      }
 
       const loadedCards = (cc.data ?? []) as CreditCard[];
       const loadedTx = (t.data ?? []) as Transaction[];
@@ -177,19 +249,39 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         if (createdPapa) setCards((prev) => [...prev, createdPapa as CreditCard]);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "No se pudieron cargar los datos.");
+      const cached = readFinanceSnapshot();
+      if (!cached) {
+        toast.error(err instanceof Error ? err.message : "No se pudieron cargar los datos.");
+      }
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [currentUser, loadCached, supabase]);
 
   const flushOutbox = useCallback(async () => {
     const items = await readOutbox();
+    let synced = 0;
     for (const item of items) {
       const { error } = await supabase.from(item.table).insert(item.payload);
-      if (!error) await removeOutbox(item.id);
+      if (error) continue;
+      const payload = item.payload;
+      const cash = payload.payment_method !== "tarjeta_credito";
+      const accountId = typeof payload.account_id === "string" ? payload.account_id : null;
+      if (cash && accountId) {
+        const { data: acc } = await supabase.from("accounts").select("balance").eq("id", accountId).single();
+        if (acc) {
+          const delta = payload.type === "ingreso" ? Number(payload.amount) : -Number(payload.amount);
+          await supabase.from("accounts").update({ balance: Number(acc.balance) + delta }).eq("id", accountId);
+        }
+      }
+      await removeOutbox(item.id);
+      synced += 1;
     }
-    if (items.length) await refresh();
+    setPendingSync((await readOutbox()).length);
+    if (synced) {
+      toast.success(synced === 1 ? "Se subió 1 movimiento." : `Se subieron ${synced} movimientos.`);
+      await refresh();
+    }
   }, [refresh, supabase]);
 
   useEffect(() => {
@@ -201,7 +293,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     const off = () => setOnline(false);
     window.addEventListener("online", on);
     window.addEventListener("offline", off);
-    void refresh();
+    void refresh().then(() => {
+      if (navigator.onLine) void flushOutbox();
+    });
     return () => {
       window.removeEventListener("online", on);
       window.removeEventListener("offline", off);
@@ -209,9 +303,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   }, [flushOutbox, refresh]);
 
   const saveTransaction: FinanceContextValue["saveTransaction"] = async (input) => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await currentUser();
     if (!user) throw new Error("Sin sesión");
 
     const cash = (input.payment_method ?? "efectivo") !== "tarjeta_credito";
@@ -246,32 +338,41 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       );
     };
 
-    if (!navigator.onLine) {
-      await enqueueOutbox({ table: "transactions", payload });
+    const queueLocal = async () => {
+      const row = await enqueueOutbox({ table: "transactions", payload });
+      setPendingSync((n) => n + 1);
       setTransactions((prev) => [
         {
-          id: `local-${crypto.randomUUID()}`,
+          id: `local-${row.id}`,
           ...payload,
         } as Transaction,
         ...prev,
       ]);
       applyLocalWallet();
-      toast.message("Guardado offline. Se sincroniza al reconectar.");
+      toast.message("Guardado sin señal. Se sube cuando vuelva internet.");
+    };
+
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      await queueLocal();
       return;
     }
 
-    const { error } = await supabase.from("transactions").insert(payload);
-    if (error) throw error;
+    try {
+      const { error } = await supabase.from("transactions").insert(payload);
+      if (error) throw error;
 
-    if (cash && walletId) {
-      const acc = accounts.find((a) => a.id === walletId);
-      if (acc) {
-        const delta = payload.type === "ingreso" ? Number(payload.amount) : -Number(payload.amount);
-        await supabase.from("accounts").update({ balance: Number(acc.balance) + delta }).eq("id", walletId);
+      if (cash && walletId) {
+        const acc = accounts.find((a) => a.id === walletId);
+        if (acc) {
+          const delta = payload.type === "ingreso" ? Number(payload.amount) : -Number(payload.amount);
+          await supabase.from("accounts").update({ balance: Number(acc.balance) + delta }).eq("id", walletId);
+        }
       }
-    }
 
-    await refresh();
+      await refresh();
+    } catch {
+      await queueLocal();
+    }
   };
 
   const saveInstallmentPurchase: FinanceContextValue["saveInstallmentPurchase"] = async (input) => {
@@ -706,6 +807,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       value={{
         loading,
         online,
+        pendingSync,
         profile,
         categories,
         accounts,
