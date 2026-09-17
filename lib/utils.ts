@@ -1,3 +1,4 @@
+import { parseAmountInput } from "@/lib/finance/amount";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -10,17 +11,17 @@ export function formatMoney(
   currency: "ARS" | "USD" = "ARS",
   locale = "es-AR",
 ) {
+  const hasCents = Math.round(Math.abs(amount) * 100) % 100 !== 0;
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
-    maximumFractionDigits: currency === "ARS" ? 0 : 2,
+    minimumFractionDigits: hasCents ? 2 : 0,
+    maximumFractionDigits: hasCents ? 2 : 0,
   }).format(amount);
 }
 
 export function toNumber(value: string | number | null | undefined) {
-  if (typeof value === "number") return value;
-  if (!value) return 0;
-  return Number(String(value).replace(/\./g, "").replace(",", ".")) || 0;
+  return parseAmountInput(value);
 }
 
 export function monthKey(date = new Date()) {

@@ -38,7 +38,7 @@ export default function MasPage() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-lg space-y-5">
+    <div className="mx-auto w-full min-w-0 max-w-lg space-y-5 md:max-w-2xl">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Más</h1>
         <p className="text-sm text-muted-foreground">
@@ -69,7 +69,7 @@ export default function MasPage() {
             <p className="text-sm text-muted-foreground">Todavía no hay fijos. Agregá luz, internet, expensas…</p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              Tocá uno para cambiar el monto, el día, si se debita de la Visa, o borrarlo.
+              Tocá uno para cambiar el monto, si se debita de la Visa, o borrarlo.
             </p>
           )}
           {recurring.map((r) => (
@@ -82,8 +82,7 @@ export default function MasPage() {
               <span>
                 {r.name}{" "}
                 <span className="text-muted-foreground">
-                  · día {r.due_day}
-                  {isCardRecurring(r) ? " · Visa" : r.is_paid ? " · pagado" : ""}
+                  {isCardRecurring(r) ? " · se debita con la Visa" : ` · día ${r.due_day}${r.is_paid ? " · pagado" : ""}`}
                 </span>
               </span>
               <span className="font-medium">{formatMoney(Number(r.amount), r.currency)}</span>
@@ -96,7 +95,7 @@ export default function MasPage() {
               void saveRecurring({
                 name: fixedName,
                 amount: parseAmountInput(fixedAmount),
-                due_day: Number(fixedDay) || 10,
+                due_day: fixedPay === "plata" ? Number(fixedDay) || 10 : 1,
                 frequency: "mensual",
                 notes: withRecurringVia(null, fixedPay !== "plata", fixedPay !== "plata" && fixedPay !== "tarjeta" ? fixedPay : visible[0]?.id ?? null),
               })
@@ -121,7 +120,11 @@ export default function MasPage() {
               required
             />
             <AmountInput value={fixedAmount} onChange={setFixedAmount} placeholder="Monto" required />
-            <Input value={fixedDay} onChange={(e) => setFixedDay(e.target.value)} placeholder="Día" />
+            {fixedPay === "plata" ? (
+              <Input value={fixedDay} onChange={(e) => setFixedDay(e.target.value)} placeholder="Día" />
+            ) : (
+              <p className="self-center text-xs text-muted-foreground">Sin vencimiento: se paga con la tarjeta</p>
+            )}
             <Select
               className="col-span-3"
               value={fixedPay}

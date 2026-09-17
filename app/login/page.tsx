@@ -119,7 +119,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-dvh items-center justify-center p-4">
+    <div className="flex min-h-dvh items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
       <Toaster />
       <Card className="w-full max-w-md">
         <CardHeader>

@@ -160,7 +160,7 @@ export function QuickManual() {
 
   return (
     <form className="space-y-3" onSubmit={(e) => void submit(e)}>
-      <div className="grid grid-cols-4 gap-1">
+      <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
         {(
           [
             ["ingreso", "Cobré"],

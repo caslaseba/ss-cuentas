@@ -31,6 +31,8 @@ export function StatementPanel({
   now,
   onSelectTx,
   onAddCharge,
+  compact = false,
+  hideCategories = false,
 }: {
   title: string;
   hint: string;
@@ -43,6 +45,8 @@ export function StatementPanel({
   now: Date;
   onSelectTx: (tx: Transaction) => void;
   onAddCharge: (input: { concept: string; amount: number; kind: CardChargeKind }) => Promise<void>;
+  compact?: boolean;
+  hideCategories?: boolean;
 }) {
   const closed = isCycleClosed(summary.cycle, now);
   const papaSpent = summary.byCard.find((r) => r.id === papa?.id)?.amount ?? 0;
@@ -100,7 +104,7 @@ export function StatementPanel({
           {DAD_CARD_NAME}: {formatMoney(papaSpent, "ARS")}
         </p>
 
-        {cats.length > 0 ? (
+        {compact || hideCategories ? null : cats.length > 0 ? (
           <div className="mt-4 space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-violet-800/80 dark:text-violet-200/80">
               En qué se va
@@ -124,7 +128,7 @@ export function StatementPanel({
           <p className="mt-3 text-sm text-muted-foreground">Todavía no hay consumos en este cierre.</p>
         )}
 
-        {items.length > 0 ? (
+        {compact ? null : items.length > 0 ? (
           <div className="mt-4 space-y-1.5">
             <p className="text-xs font-medium uppercase tracking-wide text-violet-800/80 dark:text-violet-200/80">
               Detalle de consumos

@@ -627,7 +627,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       name: cleaned,
       amount: input.amount,
       currency: input.currency ?? "ARS",
-      due_day: Math.min(28, Math.max(1, new Date().getDate())),
+      due_day: 1,
       category_id: input.category_id ?? null,
       notes,
     });

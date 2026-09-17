@@ -60,7 +60,7 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
       await updateRecurring(item.id, {
         name: name.trim(),
         amount: n,
-        due_day: Math.min(28, Math.max(1, Number(dueDay) || 1)),
+        due_day: onCard ? 1 : Math.min(28, Math.max(1, Number(dueDay) || 1)),
         category_id: categoryId || null,
         notes: withRecurringVia(item.notes, onCard, onCard ? cardId : null),
       });
@@ -94,14 +94,16 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
         <Input className="mt-1.5" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <div>
+        <div className={payHow === "plata" ? "" : "col-span-2"}>
           <Label>Monto</Label>
           <AmountInput className="mt-1.5" value={amount} onChange={setAmount} />
         </div>
-        <div>
-          <Label>Día de vencimiento</Label>
-          <Input className="mt-1.5" value={dueDay} onChange={(e) => setDueDay(e.target.value)} inputMode="numeric" />
-        </div>
+        {payHow === "plata" ? (
+          <div>
+            <Label>Día de vencimiento</Label>
+            <Input className="mt-1.5" value={dueDay} onChange={(e) => setDueDay(e.target.value)} inputMode="numeric" />
+          </div>
+        ) : null}
       </div>
       <div>
         <Label>Cómo se paga</Label>
@@ -115,7 +117,7 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
         </Select>
         {payHow !== "plata" ? (
           <p className="mt-1.5 text-xs text-muted-foreground">
-            Aparece en Servicios como recordatorio. No se suma otra vez: ya va en el resumen de la tarjeta.
+            Sin día de vencimiento: se paga solo cuando pagás el resumen. No se suma otra vez.
           </p>
         ) : null}
       </div>

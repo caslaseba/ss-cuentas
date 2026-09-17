@@ -15,6 +15,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useDolarRate } from "@/hooks/use-dolar-rate";
 import { MY_CARD_NAME, householdCards } from "@/lib/finance/cards";
 import {
+  currentInstallmentForCycle,
+  inCycle,
   planProgress,
   statementRefForMonth,
   summarizeCard,
@@ -23,7 +25,7 @@ import {
 import { paymentMethodLabel } from "@/lib/finance/match";
 import {
   categoryChipClass,
-  categoryTotals,
+  groupedCategorySplit,
   groupCategory,
   methodBarClass,
   methodBoxClass,
@@ -75,10 +77,6 @@ export default function DashboardPage() {
   const cardServices = isCurrent ? recurring.filter((r) => isCardRecurring(r)) : [];
   const cashMonthTx = wallet.monthTx.filter((t) => t.payment_method !== "tarjeta_credito");
   const cashTx = cashMonthTx.filter((t) => t.type === "egreso");
-  const methods = methodBreakdown(cashMonthTx, toArs);
-  const methodMax = Math.max(...methods.map((m) => m.amount), 1);
-  const cashCategories = categoryTotals(cashTx, categories, toArs);
-  const recent = [...cashMonthTx].sort((a, b) => b.occurred_on.localeCompare(a.occurred_on));
 
   const cuotaPlans = installments
     .filter((plan) => visibleIds.has(plan.credit_card_id))
@@ -99,6 +97,44 @@ export default function DashboardPage() {
   const lastNavigable = startOfMonth(liveStatement?.cycle.end ?? now);
   const canGoNext = startOfMonth(cursor).getTime() < lastNavigable.getTime();
   const tarjetaMes = monthStatement?.totalLocal ?? 0;
+
+  const cardMonthTx = wallet.monthTx.filter((t) => t.type === "egreso" && t.payment_method === "tarjeta_credito");
+  const spendTx = uniqueById([
+    ...cashTx,
+    ...cardMonthTx,
+    ...(monthStatement?.tx ?? []),
+  ]);
+  const spendCategories = groupedCategorySplit(spendTx, categories, toArs);
+  const cashMethods = methodBreakdown(cashMonthTx, toArs).filter((row) => row.name !== "Tarjeta");
+  const methods = [
+    ...cashMethods,
+    ...(tarjetaMes > 0 ? [{ name: "Tarjeta", amount: tarjetaMes }] : []),
+  ].sort((a, b) => b.amount - a.amount);
+  const methodMax = Math.max(...methods.map((m) => m.amount), 1);
+  const monthMoves = uniqueById([
+    ...cashMonthTx,
+    ...cardMonthTx,
+    ...(monthStatement?.tx ?? []),
+  ]).sort((a, b) => b.occurred_on.localeCompare(a.occurred_on));
+  const orphanCuotas = monthStatement
+    ? cuotaPlans.filter(({ plan }) => {
+        const slot = currentInstallmentForCycle(plan, monthStatement.cycle);
+        if (!slot) return false;
+        return !monthStatement.tx.some((t) => t.installment_id === plan.id);
+      })
+    : [];
+  const nextCategories = showNextStatement && liveStatement
+    ? groupedCategorySplit(liveStatement.tx, categories, toArs)
+    : [];
+  const nextCuotas = liveStatement
+    ? cuotaPlans.filter(({ plan, progress }) => {
+        if (progress.isLast) return false;
+        const slot = currentInstallmentForCycle(plan, liveStatement.cycle);
+        if (!slot) return progress.remainingAfterThis > 0 && showNextStatement;
+        if (!showNextStatement) return false;
+        return !liveStatement.tx.some((t) => t.installment_id === plan.id);
+      })
+    : [];
 
   async function bringLeftover() {
     if (!leftover || alreadyCarried) return;
@@ -130,30 +166,32 @@ export default function DashboardPage() {
   const usdRate = quote?.tarjeta || quote?.oficial || Number(profile?.usd_exchange_rate ?? 0);
 
   return (
-    <div className="mx-auto max-w-lg space-y-5">
+    <div className="w-full min-w-0 space-y-5">
       <div>
-        <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <Button
             type="button"
             size="sm"
             variant="outline"
+            className="w-full sm:w-auto"
             onClick={() => setCursor((d) => shiftMonth(d, -1))}
           >
-            ← Mes anterior
+            ← Anterior
           </Button>
-          <p className="text-sm font-medium capitalize">{format(cursor, "MMMM yyyy", { locale: es })}</p>
+          <p className="text-center text-sm font-medium capitalize">{format(cursor, "MMMM yyyy", { locale: es })}</p>
           <Button
             type="button"
             size="sm"
             variant="outline"
+            className="w-full sm:w-auto"
             disabled={!canGoNext}
             onClick={() => setCursor((d) => shiftMonth(d, 1))}
           >
-            Mes siguiente →
+            Siguiente →
           </Button>
         </div>
         <p className="text-sm font-medium text-muted-foreground">{isCurrent ? "Te queda" : "Te quedó"}</p>
-        <p className="text-4xl font-semibold tracking-tight text-emerald-800 dark:text-emerald-300">{formatMoney(wallet.queda, "ARS")}</p>
+        <p className="text-3xl font-semibold tracking-tight break-words text-emerald-800 dark:text-emerald-300 sm:text-4xl">{formatMoney(wallet.queda, "ARS")}</p>
         {usdRate > 0 ? (
           <p className="mt-1 text-xs text-muted-foreground">
             Dólar tarjeta {formatMoney(usdRate, "ARS")}
@@ -163,7 +201,7 @@ export default function DashboardPage() {
       </div>
 
       {leftover > 0 && !alreadyCarried ? (
-        <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3">
+        <div className="flex flex-col items-stretch gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-medium text-emerald-900">Sobra del mes anterior</p>
             <p className="text-xs text-muted-foreground">
@@ -180,7 +218,7 @@ export default function DashboardPage() {
         <p className="text-xs text-muted-foreground">Ya está sumada la sobra del mes anterior.</p>
       ) : null}
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
         <StatBox
           label="Entró"
           value={formatMoney(wallet.cobrado, "ARS")}
@@ -198,92 +236,8 @@ export default function DashboardPage() {
         />
       </div>
 
-      {monthStatement && mine ? (
-        <StatementPanel
-          title={`Resumen de ${format(cursor, "MMMM", { locale: es })} · ${MY_CARD_NAME}`}
-          hint={`Cierra el ${mine.closing_day} · vence el ${mine.due_day}. Los consumos del ciclo entran acá, no el día que compraste.`}
-          summary={monthStatement}
-          mine={mine}
-          papa={papa}
-          categories={categories}
-          cards={cards}
-          toArs={toArs}
-          now={now}
-          onSelectTx={setEditing}
-          onAddCharge={async ({ concept, amount, kind }) => {
-            const taxCat = categories.find((c) => c.type === "egreso" && c.name.toLowerCase().includes("impuesto"));
-            await saveTransaction({
-              type: "egreso",
-              amount,
-              concept,
-              payment_method: "tarjeta_credito",
-              credit_card_id: mine.id,
-              category_id: taxCat?.id ?? null,
-              occurred_on: isoDate(monthStatement.cycle.end),
-              notes: withCardCharge(null, kind),
-              source: "manual",
-            });
-          }}
-        />
-      ) : null}
-
-      {showNextStatement && liveStatement && mine ? (
-        <StatementPanel
-          title={`Va a ${format(liveStatement.cycle.end, "MMMM", { locale: es })} · todavía abierto`}
-          hint="Cuando cierre, este detalle pasa al mes siguiente como gastos de tarjeta."
-          summary={liveStatement}
-          mine={mine}
-          papa={papa}
-          categories={categories}
-          cards={cards}
-          toArs={toArs}
-          now={now}
-          onSelectTx={setEditing}
-          onAddCharge={async ({ concept, amount, kind }) => {
-            const taxCat = categories.find((c) => c.type === "egreso" && c.name.toLowerCase().includes("impuesto"));
-            await saveTransaction({
-              type: "egreso",
-              amount,
-              concept,
-              payment_method: "tarjeta_credito",
-              credit_card_id: mine.id,
-              category_id: taxCat?.id ?? null,
-              occurred_on: isoDate(liveStatement.cycle.end),
-              notes: withCardCharge(null, kind),
-              source: "manual",
-            });
-          }}
-        />
-      ) : null}
-
-      {cuotaPlans.length > 0 ? (
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium">Cuotas</h2>
-          <p className="text-xs text-muted-foreground">Tocá una para decir en qué cuota vas y cuánto falta.</p>
-          {cuotaPlans.map(({ plan, progress }) => {
-            const card = cards.find((c) => c.id === plan.credit_card_id);
-            return (
-              <button
-                key={plan.id}
-                type="button"
-                onClick={() => openCuota(plan)}
-                className="w-full rounded-2xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-left text-sm"
-              >
-                <p className="font-medium">{plan.concept}</p>
-                <p className="text-xs text-muted-foreground">
-                  {card?.name ?? "Tarjeta"} · cuota {progress.current}/{progress.total}
-                  {progress.isLast
-                    ? " · última"
-                    : ` · faltan ${progress.remainingAfterThis} (${formatMoney(progress.remainingAmount, plan.currency)})`}
-                  {" · termina "}
-                  {format(progress.endsOn, "MMMM yyyy", { locale: es })}
-                </p>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-
+      <div className="space-y-5 xl:grid xl:grid-cols-2 xl:items-start xl:gap-8 xl:space-y-0">
+        <div className="space-y-5">
       {isCurrent ? (
         <>
           <div className="flex flex-col items-center gap-2 rounded-3xl border border-dashed border-primary/30 bg-primary/5 px-4 py-6">
@@ -305,6 +259,20 @@ export default function DashboardPage() {
           Estás viendo un mes anterior. Volvé al mes actual para cargar gastos nuevos.
         </p>
       )}
+        </div>
+        <div className="space-y-5 min-w-0">
+
+      {spendCategories.length > 0 ? (
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium">Categorías de este mes</h2>
+          <p className="text-xs text-muted-foreground">
+            Incluye súper, comida, etc. Lo que compraste con tarjeta después del cierre también está acá, y se imputa al próximo resumen.
+          </p>
+          {spendCategories.map((row) => (
+            <CategoryBar key={row.name} name={row.name} amount={row.total} split={row.split} />
+          ))}
+        </div>
+      ) : null}
 
       {methods.length > 0 ? (
         <div className="space-y-2">
@@ -315,7 +283,15 @@ export default function DashboardPage() {
                 <span className="font-medium">{row.name}</span>
                 <span className="font-semibold">{formatMoney(row.amount, "ARS")}</span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-black/10">
+              {row.name === "Tarjeta" && monthStatement && mine ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Tuya {formatMoney(monthStatement.byCard.find((c) => c.id === mine.id)?.amount ?? 0, "ARS")}
+                  {papa
+                    ? ` · ${papa.name} ${formatMoney(monthStatement.byCard.find((c) => c.id === papa.id)?.amount ?? 0, "ARS")}`
+                    : ""}
+                </p>
+              ) : null}
+              <div className="h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/15">
                 <div
                   className={cn("h-full rounded-full", methodBarClass(row.name))}
                   style={{ width: `${Math.max(8, (row.amount / methodMax) * 100)}%` }}
@@ -326,20 +302,11 @@ export default function DashboardPage() {
         </div>
       ) : null}
 
-      {cashCategories.length > 0 ? (
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium">Tu plata · categorías</h2>
-          {cashCategories.map((row) => (
-            <CategoryBar key={row.name} name={row.name} amount={row.amount} max={Math.max(...cashCategories.map((c) => c.amount), 1)} />
-          ))}
-        </div>
-      ) : null}
-
       {cashPending.length > 0 || cardServices.length > 0 ? (
         <div className="space-y-2">
-          <h2 className="text-sm font-medium">Servicios a pagar</h2>
+          <h2 className="text-sm font-medium">Servicios del mes</h2>
           <p className="text-xs text-muted-foreground">
-            Tocá el nombre para editar. Los de Visa ya están en el resumen de la tarjeta: no salen de tu plata.
+            Los de tarjeta se ven acá para marcarlos, pero el monto ya está en el resumen: no se suma otra vez.
           </p>
           {cardServices.map((r) => {
             const via = recurringVia(r);
@@ -355,8 +322,8 @@ export default function DashboardPage() {
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-violet-950 dark:text-violet-100">{r.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    Día {r.due_day} · se paga con {card?.name ?? MY_CARD_NAME}
-                    {onCard ? " · ya está en el resumen" : " · no suma otra vez en tu plata"}
+                    {card?.name ?? MY_CARD_NAME}
+                    {onCard ? " · ya está en el resumen, no duplica" : " · se debita con el pago de la tarjeta"}
                   </p>
                 </div>
                 <span className="shrink-0 text-sm font-medium text-violet-900 dark:text-violet-200">
@@ -398,26 +365,51 @@ export default function DashboardPage() {
         </div>
       ) : null}
 
-      <div className="space-y-2 pb-4">
+      <div className="space-y-2">
         <h2 className="text-sm font-medium">Movimientos de {format(cursor, "MMMM", { locale: es })}</h2>
         <p className="text-xs text-muted-foreground">
-          Cobros y gastos de tu plata. Los de tarjeta están en el resumen de arriba. Tocá para editar.
+          Incluye cuotas y consumos de tarjeta de este resumen. Tocá para editar.
         </p>
-        {recent.length === 0 ? (
+        {monthMoves.length === 0 && orphanCuotas.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {isCurrent ? "Todavía no hay nada este mes. Dictá un cobro para empezar." : "No hay movimientos en este mes."}
           </p>
         ) : null}
-        {recent.map((t) => {
+        {orphanCuotas.map(({ plan, progress }) => (
+          <button
+            key={`cuota-${plan.id}`}
+            type="button"
+            onClick={() => openCuota(plan)}
+            className="w-full rounded-xl border border-violet-500/25 bg-violet-500/10 px-3 py-2 text-left text-sm"
+          >
+            <p className="font-medium">{plan.concept}</p>
+            <p className="text-xs text-muted-foreground">
+              Cuota {progress.current}/{progress.total}
+              {progress.isLast
+                ? " · última"
+                : ` · faltan ${progress.remainingAfterThis} (${formatMoney(progress.remainingAmount, plan.currency)})`}
+              {" · "}
+              {formatMoney(Number(plan.installment_amount), plan.currency)}
+            </p>
+          </button>
+        ))}
+        {monthMoves.map((t) => {
           const cat = categories.find((c) => c.id === t.category_id)?.name;
           const catGroup = groupCategory(cat);
           const sign = t.type === "ingreso" ? "+" : "−";
+          const card = cards.find((c) => c.id === t.credit_card_id);
+          const plan = t.installment_id ? installments.find((i) => i.id === t.installment_id) : null;
+          const progress = plan ? planProgress(plan, cursor) : null;
           const methodName =
             t.type === "ingreso"
               ? isLeftoverTx(t.notes)
                 ? "Sobra"
                 : "Entrada"
-              : paymentMethodLabel(t.payment_method);
+              : t.payment_method === "tarjeta_credito"
+                ? card?.kind === "extension"
+                  ? card.name
+                  : "Tarjeta"
+                : paymentMethodLabel(t.payment_method);
           const obs = observationOf(t.notes);
           return (
             <button
@@ -432,13 +424,26 @@ export default function DashboardPage() {
               <div className="min-w-0">
                 <p className="font-medium">{t.concept}</p>
                 {obs ? <p className="truncate text-[11px] text-muted-foreground">{obs}</p> : null}
+                {progress && plan ? (
+                  <p className="text-[11px] text-violet-800 dark:text-violet-200">
+                    Cuota {progress.current}/{progress.total}
+                    {progress.isLast
+                      ? " · última"
+                      : ` · faltan ${progress.remainingAfterThis} (${formatMoney(progress.remainingAmount, plan.currency)})`}
+                  </p>
+                ) : null}
                 <div className="mt-1 flex flex-wrap gap-1">
                   <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium", methodChipClass(t.payment_method, t.type))}>
                     {methodName}
                   </span>
                   {t.type === "egreso" ? (
                     <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium", categoryChipClass(catGroup))}>
-                      {cat ?? "Sin categoría"}
+                      {catGroup}
+                    </span>
+                  ) : null}
+                  {t.payment_method === "tarjeta_credito" && monthStatement && !inCycle(t.occurred_on, monthStatement.cycle) ? (
+                    <span className="rounded-full border border-violet-500/40 bg-violet-500/15 px-2 py-0.5 text-[10px] font-medium text-violet-900 dark:text-violet-100">
+                      Próximo resumen
                     </span>
                   ) : null}
                   <span className="text-[10px] text-muted-foreground">
@@ -455,6 +460,98 @@ export default function DashboardPage() {
         })}
       </div>
 
+      {showNextStatement && liveStatement && mine ? (
+        <div className="space-y-3 pb-4">
+          <h2 className="text-sm font-medium">Va al mes siguiente</h2>
+          <p className="text-xs text-muted-foreground">
+            Este ciclo todavía está abierto: cierra y se imputa al mes que viene.
+          </p>
+          {nextCategories.length > 0 ? (
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium">Categorías del próximo resumen</h3>
+              {nextCategories.map((row) => (
+                <CategoryBar key={`next-${row.name}`} name={row.name} amount={row.total} split={row.split} />
+              ))}
+            </div>
+          ) : null}
+          <StatementPanel
+            title={`Va a ${format(liveStatement.cycle.end, "MMMM", { locale: es })} · todavía abierto`}
+            hint="Cuando cierre, este detalle pasa al mes siguiente como gastos de tarjeta."
+            summary={liveStatement}
+            mine={mine}
+            papa={papa}
+            categories={categories}
+            cards={cards}
+            toArs={toArs}
+            now={now}
+            hideCategories
+            onSelectTx={setEditing}
+            onAddCharge={async ({ concept, amount, kind }) => {
+              const taxCat = categories.find((c) => c.type === "egreso" && c.name.toLowerCase().includes("impuesto"));
+              await saveTransaction({
+                type: "egreso",
+                amount,
+                concept,
+                payment_method: "tarjeta_credito",
+                credit_card_id: mine.id,
+                category_id: taxCat?.id ?? null,
+                occurred_on: isoDate(liveStatement.cycle.end),
+                notes: withCardCharge(null, kind),
+                source: "manual",
+              });
+            }}
+          />
+          {nextCuotas.map(({ plan, progress }) => (
+            <button
+              key={`next-${plan.id}`}
+              type="button"
+              onClick={() => openCuota(plan)}
+              className="w-full rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-left text-sm"
+            >
+              <p className="font-medium">{plan.concept}</p>
+              <p className="text-xs text-muted-foreground">
+                Sigue en cuotas: {progress.current}/{progress.total} · faltan {progress.remainingAfterThis} (
+                {formatMoney(progress.remainingAmount, plan.currency)})
+              </p>
+            </button>
+          ))}
+        </div>
+      ) : monthStatement && mine && isCurrent ? (
+        <div className="pb-4">
+          <StatementPanel
+            title={`Resumen abierto · ${MY_CARD_NAME}`}
+            hint="Cargos de impuestos o intereses de este cierre. Los consumos ya están arriba."
+            summary={monthStatement}
+            mine={mine}
+            papa={papa}
+            categories={categories}
+            cards={cards}
+            toArs={toArs}
+            now={now}
+            compact
+            onSelectTx={setEditing}
+            onAddCharge={async ({ concept, amount, kind }) => {
+              const taxCat = categories.find((c) => c.type === "egreso" && c.name.toLowerCase().includes("impuesto"));
+              await saveTransaction({
+                type: "egreso",
+                amount,
+                concept,
+                payment_method: "tarjeta_credito",
+                credit_card_id: mine.id,
+                category_id: taxCat?.id ?? null,
+                occurred_on: isoDate(monthStatement.cycle.end),
+                notes: withCardCharge(null, kind),
+                source: "manual",
+              });
+            }}
+          />
+        </div>
+      ) : (
+        <div className="pb-4" />
+      )}
+        </div>
+      </div>
+
       <TransactionEdit tx={editing} open={Boolean(editing)} onOpenChange={(v) => !v && setEditing(null)} />
       <RecurringEdit item={editingFixed} open={Boolean(editingFixed)} onOpenChange={(v) => !v && setEditingFixed(null)} />
     </div>
@@ -463,26 +560,53 @@ export default function DashboardPage() {
 
 function StatBox({ label, value, className }: { label: string; value: string; className: string }) {
   return (
-    <div className={cn("rounded-2xl border px-2 py-3 text-center", className)}>
-      <p className="text-[11px] font-medium opacity-80">{label}</p>
-      <p className="text-sm font-semibold leading-tight">{value}</p>
+    <div className={cn("min-w-0 rounded-2xl border px-1.5 py-3 text-center sm:px-2", className)}>
+      <p className="text-[10px] font-medium opacity-80 sm:text-[11px]">{label}</p>
+      <p className="break-words text-xs font-semibold leading-tight sm:text-sm">{value}</p>
     </div>
   );
 }
 
-function CategoryBar({ name, amount, max }: { name: string; amount: number; max: number }) {
+function CategoryBar({
+  name,
+  amount,
+  split,
+}: {
+  name: string;
+  amount: number;
+  split: { method: string; amount: number }[];
+}) {
   return (
     <div className={cn("rounded-xl border px-3 py-2", categoryChipClass(groupCategory(name)))}>
       <div className="flex items-center justify-between text-sm">
         <span className="font-medium">{name}</span>
         <span className="font-semibold">{formatMoney(amount, "ARS")}</span>
       </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-black/10">
-        <div
-          className="h-full rounded-full bg-current opacity-70"
-          style={{ width: `${Math.max(8, (amount / max) * 100)}%` }}
-        />
+      <div className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/15">
+        {split.map((part) => (
+          <div
+            key={part.method}
+            className={cn("h-full", methodBarClass(part.method))}
+            style={{ width: `${Math.max(4, (part.amount / Math.max(amount, 1)) * 100)}%` }}
+          />
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {split.map((part) => (
+          <span
+            key={part.method}
+            className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium", methodBoxClass(part.method))}
+          >
+            {part.method} {formatMoney(part.amount, "ARS")}
+          </span>
+        ))}
       </div>
     </div>
   );
+}
+
+function uniqueById(list: Transaction[]) {
+  const map = new Map<string, Transaction>();
+  for (const t of list) map.set(t.id, t);
+  return [...map.values()];
 }

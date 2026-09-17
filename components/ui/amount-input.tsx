@@ -9,7 +9,7 @@ export function AmountInput({
   value,
   onChange,
   className,
-  placeholder = "15.000",
+  placeholder = "103.522,50",
   ...props
 }: Omit<ComponentProps<"input">, "onChange" | "value" | "inputMode"> & {
   value: string;
