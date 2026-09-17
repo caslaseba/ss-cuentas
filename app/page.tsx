@@ -36,7 +36,7 @@ export default function Home() {
           {[
             { icon: Mic, title: "Voz o a mano", body: "Cobré / compré milanesa por 15 mil." },
             { icon: CreditCard, title: "Visa del mes", body: "Lo de tarjeta se suma al resumen." },
-            { icon: Smartphone, title: "En el celu", body: "Dos botones: Hoy y Más." },
+            { icon: Smartphone, title: "En el celu", body: "Cargar, resumen y Más." },
             { icon: WifiOff, title: "Offline", body: "Cargás igual; sincroniza al reconectar." },
           ].map((item) => (
             <li key={item.title} className="rounded-2xl border border-border bg-card p-4">

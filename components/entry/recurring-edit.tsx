@@ -12,6 +12,7 @@ import { Select } from "@/components/ui/select";
 import { householdCards } from "@/lib/finance/cards";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
 import { recurringVia, withRecurringVia } from "@/lib/finance/recurring";
+import { inCurrentMonth } from "@/lib/finance/wallet";
 import type { RecurringPayment } from "@/lib/types";
 
 export function RecurringEdit({
@@ -37,7 +38,7 @@ export function RecurringEdit({
 }
 
 function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void }) {
-  const { categories, cards, transactions, updateRecurring, deleteRecurring, toggleRecurringPaid } = useFinance();
+  const { categories, cards, transactions, updateRecurring, deleteRecurring, toggleRecurringPaid, deleteTransaction } = useFinance();
   const { visible } = householdCards(cards, transactions);
   const via = recurringVia(item);
   const [name, setName] = useState(item.name);
@@ -140,12 +141,27 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
           variant="outline"
           disabled={busy}
           onClick={() => {
-            void toggleRecurringPaid(item.id, false)
-              .then(() => {
+            void (async () => {
+              try {
+                setBusy(true);
+                const linked = transactions.find(
+                  (t) =>
+                    t.source === "recurrente" &&
+                    t.concept === item.name &&
+                    t.type === "egreso" &&
+                    t.payment_method !== "tarjeta_credito" &&
+                    inCurrentMonth(t.occurred_on),
+                );
+                if (linked) await deleteTransaction(linked.id);
+                await toggleRecurringPaid(item.id, false);
                 toast.success("Quedó como impago este mes");
                 onDone();
-              })
-              .catch((err) => toast.error(err instanceof Error ? err.message : "Error"));
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : "Error");
+              } finally {
+                setBusy(false);
+              }
+            })();
           }}
         >
           Marcar como no pagado

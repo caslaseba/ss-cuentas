@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Home, LogOut, MoreHorizontal } from "lucide-react";
+import { LayoutDashboard, LogOut, Mic, MoreHorizontal } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Toaster } from "sonner";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
@@ -13,7 +13,8 @@ import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const NAV = [
-  { href: "/dashboard", label: "Hoy", icon: Home },
+  { href: "/dashboard", label: "Cargar", icon: Mic },
+  { href: "/resumen", label: "Resumen", icon: LayoutDashboard },
   { href: "/mas", label: "Más", icon: MoreHorizontal },
 ];
 
@@ -46,8 +47,10 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     <div className="app-zoom min-h-dvh bg-background">
       <header className="safe-header sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-border bg-background/80 px-3 py-3 backdrop-blur sm:px-4">
         <div className="min-w-0">
-          <p className="truncate font-semibold">SS Cuentas</p>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="truncate font-semibold" suppressHydrationWarning>
+            SS Cuentas
+          </p>
+          <p className="text-[11px] text-muted-foreground" suppressHydrationWarning>
             {online ? "En línea" : "Sin señal · se actualiza al volver"}
             {pendingSync > 0 ? ` · ${pendingSync} pendiente${pendingSync === 1 ? "" : "s"}` : ""}
           </p>
@@ -90,10 +93,13 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </div>
       </main>
 
-      <nav className="safe-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-2 border-t border-border bg-background/95 px-2 pt-2 backdrop-blur">
+      <nav className="safe-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t border-border bg-background/95 px-2 pt-2 backdrop-blur">
         {NAV.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href || (item.href === "/dashboard" && pathname === "/");
+          const active =
+            item.href === "/resumen"
+              ? pathname.startsWith("/resumen")
+              : pathname === item.href || (item.href === "/dashboard" && pathname === "/");
           return (
             <Link
               key={item.href}

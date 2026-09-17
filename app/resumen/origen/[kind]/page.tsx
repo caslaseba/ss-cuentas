@@ -1,0 +1,84 @@
+"use client";
+
+import Link from "next/link";
+import { Suspense, use, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { TransactionEdit } from "@/components/entry/transaction-edit";
+import { MovementRow } from "@/components/dashboard/movement-row";
+import { useMonthView } from "@/hooks/use-month-view";
+import { cursorFromMes, originLabel, txsForOrigin, type OriginKind } from "@/lib/finance/month-view";
+import { formatMoney, monthKey } from "@/lib/utils";
+import type { Transaction } from "@/lib/types";
+
+const KINDS: OriginKind[] = ["plata", "tarjeta", "visa", "papa"];
+
+function asKind(value: string): OriginKind {
+  return KINDS.includes(value as OriginKind) ? (value as OriginKind) : "tarjeta";
+}
+
+export default function OrigenPage({ params }: { params: Promise<{ kind: string }> }) {
+  return (
+    <Suspense fallback={<p className="text-sm text-muted-foreground">Cargando…</p>}>
+      <OrigenInner params={params} />
+    </Suspense>
+  );
+}
+
+function OrigenInner({ params }: { params: Promise<{ kind: string }> }) {
+  const { kind: raw } = use(params);
+  const kind = asKind(raw);
+  const search = useSearchParams();
+  const view = useMonthView(cursorFromMes(search.get("mes")));
+  const [editing, setEditing] = useState<Transaction | null>(null);
+  const mes = monthKey(view.cursor);
+  const list = txsForOrigin(kind, view.cashMoves, view.openCardTx, view.papa?.id ?? null);
+  const total = list
+    .filter((t) => t.type === "egreso")
+    .reduce((s, t) => s + view.toArs(Number(t.amount), t.currency), 0);
+  const hint =
+    kind === "plata"
+      ? "Sale de tu sueldo: efectivo, Mercado Pago o transferencia."
+      : "Va al próximo mes, cuando cierre el resumen.";
+
+  return (
+    <div className="mx-auto w-full max-w-lg space-y-4">
+      <Link href={`/resumen?mes=${mes}`} className="text-sm text-primary">
+        ← Resumen
+      </Link>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">{originLabel(kind)}</h1>
+        <p className="text-sm text-muted-foreground">{hint}</p>
+        <p className="mt-1 text-2xl font-semibold">{formatMoney(total, "ARS")}</p>
+      </div>
+      {kind === "tarjeta" ? (
+        <div className="flex gap-2">
+          <Link href={`/resumen/origen/visa?mes=${mes}`} className="rounded-xl border px-3 py-2 text-sm">
+            Tu Visa {formatMoney(view.visaMia, "ARS")}
+          </Link>
+          {view.papa ? (
+            <Link href={`/resumen/origen/papa?mes=${mes}`} className="rounded-xl border px-3 py-2 text-sm">
+              Visa papá {formatMoney(view.visaPapa, "ARS")}
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="space-y-2 pb-4">
+        {list.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No hay movimientos acá.</p>
+        ) : (
+          list.map((t) => (
+            <MovementRow
+              key={t.id}
+              tx={t}
+              categories={view.categories}
+              cards={view.cards}
+              installments={view.installments}
+              onSelect={setEditing}
+            />
+          ))
+        )}
+      </div>
+      <TransactionEdit tx={editing} open={Boolean(editing)} onOpenChange={(v) => !v && setEditing(null)} />
+    </div>
+  );
+}
