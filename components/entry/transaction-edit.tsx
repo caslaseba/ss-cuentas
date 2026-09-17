@@ -18,6 +18,7 @@ import { paymentMethodLabel } from "@/lib/finance/match";
 import { findRecurringByName, isCardRecurring } from "@/lib/finance/recurring";
 import { addMonths, planProgress } from "@/lib/finance/settlement";
 import { observationOf, withObservation } from "@/lib/finance/tx-notes";
+import { isProjectedTx } from "@/lib/finance/month-view";
 import { formatMoney } from "@/lib/utils";
 import type { PaymentMethod, Transaction } from "@/lib/types";
 
@@ -31,6 +32,20 @@ export function TransactionEdit({
   onOpenChange: (open: boolean) => void;
 }) {
   if (!tx) return null;
+  if (isProjectedTx(tx)) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Proyección</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Esta cuota todavía no se debitó. Se calcula para que veas cómo queda el mes.
+          </p>
+        </DialogContent>
+      </Dialog>
+    );
+  }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
