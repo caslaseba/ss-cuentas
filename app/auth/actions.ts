@@ -2,6 +2,16 @@
 
 import { createClient } from "@/lib/supabase/server";
 
+function appOrigin() {
+  const site = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (site) return site.replace(/\/$/, "");
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "http://localhost:3000";
+}
+
 export async function signUpAction(input: {
   fullName: string;
   email: string;
@@ -14,7 +24,7 @@ export async function signUpAction(input: {
       password: input.password,
       options: {
         data: { full_name: input.fullName.trim() },
-        emailRedirectTo: "http://localhost:3000/dashboard",
+        emailRedirectTo: `${appOrigin()}/dashboard`,
       },
     });
 
