@@ -49,7 +49,7 @@ function OrigenInner({ params }: { params: Promise<{ kind: string }> }) {
     .reduce((s, t) => s + view.toArs(Number(t.amount), t.currency), 0);
   const hint =
     kind === "plata"
-      ? "Sale de tu sueldo: efectivo, Mercado Pago o transferencia."
+      ? "Sale de tu sueldo: Mercado Pago o transferencia."
       : "Va al próximo mes, cuando cierre el resumen.";
 
   return (

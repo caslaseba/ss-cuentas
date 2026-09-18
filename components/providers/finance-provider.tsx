@@ -1,10 +1,11 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { enqueueOutbox, readOutbox, removeOutbox } from "@/lib/offline/sync";
 import { applyOutboxToSnapshot, readFinanceSnapshot, writeFinanceSnapshot } from "@/lib/offline/snapshot";
+import { findIcbcAccount, findMpAccount, ICBC_ACCOUNT_NAME, MP_ACCOUNT_NAME, walletForMethod } from "@/lib/finance/accounts";
 import { DAD_CARD_NAME, MY_CARD_NAME, householdCards, isPapaCard } from "@/lib/finance/cards";
 import { cleanConceptName, findRecurringByName, isCardRecurring, withRecurringVia } from "@/lib/finance/recurring";
 import { withTimeout } from "@/lib/async";
@@ -27,6 +28,8 @@ type FinanceContextValue = {
   categories: Category[];
   accounts: Account[];
   primaryAccount: Account | null;
+  mpAccount: Account | null;
+  icbcAccount: Account | null;
   cards: CreditCard[];
   transactions: Transaction[];
   installments: Installment[];
@@ -47,6 +50,7 @@ type FinanceContextValue = {
     notes?: string | null;
   }) => Promise<void>;
   saveAccount: (input: Partial<Account> & { name: string }) => Promise<void>;
+  updateAccount: (id: string, patch: Partial<Pick<Account, "name" | "balance" | "notes">>) => Promise<void>;
   saveCard: (input: Partial<CreditCard> & { name: string }) => Promise<CreditCard>;
   updateCard: (id: string, patch: Partial<CreditCard>) => Promise<void>;
   updateTransaction: (
@@ -182,7 +186,38 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         if (created) cats = [...cats, created as Category];
       }
       setCategories(cats);
-      if (a.data) setAccounts(a.data as Account[]);
+      let loadedAccounts = (a.data ?? []) as Account[];
+      if (!findMpAccount(loadedAccounts)) {
+        const { data: createdMp } = await supabase
+          .from("accounts")
+          .insert({
+            user_id: user.id,
+            name: MP_ACCOUNT_NAME,
+            kind: "billetera",
+            currency: "ARS",
+            balance: 0,
+            is_savings_box: false,
+          })
+          .select("*")
+          .single();
+        if (createdMp) loadedAccounts = [...loadedAccounts, createdMp as Account];
+      }
+      if (!findIcbcAccount(loadedAccounts)) {
+        const { data: createdBank } = await supabase
+          .from("accounts")
+          .insert({
+            user_id: user.id,
+            name: ICBC_ACCOUNT_NAME,
+            kind: "caja_ahorro",
+            currency: "ARS",
+            balance: 0,
+            is_savings_box: false,
+          })
+          .select("*")
+          .single();
+        if (createdBank) loadedAccounts = [...loadedAccounts, createdBank as Account];
+      }
+      setAccounts(loadedAccounts);
       if (cc.data) setCards(cc.data as CreditCard[]);
       if (t.data) setTransactions(t.data as Transaction[]);
       if (i.data) setInstallments(i.data as Installment[]);
@@ -191,7 +226,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         userId: user.id,
         profile: (p.data as Profile | null) ?? cached?.profile ?? null,
         categories: cats,
-        accounts: (a.data as Account[]) ?? cached?.accounts ?? [],
+        accounts: loadedAccounts.length ? loadedAccounts : cached?.accounts ?? [],
         cards: (cc.data as CreditCard[]) ?? cached?.cards ?? [],
         transactions: (t.data as Transaction[]) ?? cached?.transactions ?? [],
         installments: (i.data as Installment[]) ?? cached?.installments ?? [],
@@ -204,7 +239,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
             userId: user.id,
             profile: (p.data as Profile | null) ?? cached?.profile ?? null,
             categories: cats,
-            accounts: (a.data as Account[]) ?? cached?.accounts ?? [],
+            accounts: loadedAccounts.length ? loadedAccounts : cached?.accounts ?? [],
             cards: (cc.data as CreditCard[]) ?? cached?.cards ?? [],
             transactions: (t.data as Transaction[]) ?? cached?.transactions ?? [],
             installments: (i.data as Installment[]) ?? cached?.installments ?? [],
@@ -302,16 +337,45 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     };
   }, [flushOutbox, refresh]);
 
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+
+  useEffect(() => {
+    const pull = () => {
+      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+      void refreshRef.current();
+    };
+    const onFocus = () => pull();
+    const onVis = () => {
+      if (document.visibilityState === "visible") pull();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    const tick = window.setInterval(() => {
+      if (document.visibilityState === "visible") pull();
+    }, 8000);
+    const channel = supabase
+      .channel("ss-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "transactions" }, pull)
+      .on("postgres_changes", { event: "*", schema: "public", table: "recurring_payments" }, pull)
+      .on("postgres_changes", { event: "*", schema: "public", table: "accounts" }, pull)
+      .on("postgres_changes", { event: "*", schema: "public", table: "installments" }, pull)
+      .subscribe();
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+      window.clearInterval(tick);
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase]);
+
   const saveTransaction: FinanceContextValue["saveTransaction"] = async (input) => {
     const user = await currentUser();
     if (!user) throw new Error("Sin sesión");
 
-    const cash = (input.payment_method ?? "efectivo") !== "tarjeta_credito";
-    const walletId =
-      input.account_id ??
-      accounts.find((a) => !a.is_savings_box && a.kind === "caja_ahorro")?.id ??
-      accounts.find((a) => !a.is_savings_box)?.id ??
-      null;
+    const cash = (input.payment_method ?? "transferencia") !== "tarjeta_credito";
+    const method = input.payment_method ?? "transferencia";
+    const walletId = input.account_id ?? walletForMethod(accounts, method)?.id ?? null;
 
     const payload = {
       user_id: user.id,
@@ -324,7 +388,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       installment_id: input.installment_id ?? null,
       installment_number: input.installment_number ?? null,
       concept: input.concept,
-      payment_method: input.payment_method ?? "efectivo",
+      payment_method: method === "efectivo" ? "transferencia" : method,
       occurred_on: input.occurred_on ?? isoDate(new Date()),
       notes: input.notes ?? null,
       source: input.source ?? "manual",
@@ -437,6 +501,12 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     await refresh();
   };
 
+  const updateAccount: FinanceContextValue["updateAccount"] = async (id, patch) => {
+    const { error } = await supabase.from("accounts").update(patch).eq("id", id);
+    if (error) throw error;
+    setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+  };
+
   const saveCard: FinanceContextValue["saveCard"] = async (input) => {
     const {
       data: { user },
@@ -463,11 +533,8 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     return data as CreditCard;
   };
 
-  const walletIdFor = (accountId?: string | null) =>
-    accountId ??
-    accounts.find((a) => !a.is_savings_box && a.kind === "caja_ahorro")?.id ??
-    accounts.find((a) => !a.is_savings_box)?.id ??
-    null;
+  const walletIdFor = (accountId?: string | null, method?: Transaction["payment_method"]) =>
+    accountId ?? walletForMethod(accounts, method ?? "transferencia")?.id ?? null;
 
   const cashDelta = (tx: Pick<Transaction, "type" | "amount" | "payment_method">) => {
     if (tx.payment_method === "tarjeta_credito") return 0;
@@ -520,8 +587,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     };
     const oldCash = cashDelta(current);
     const newCash = cashDelta(next);
+    const nextMethod = next.payment_method === "efectivo" ? "transferencia" : next.payment_method;
+    next.payment_method = nextMethod;
     const oldWallet = current.payment_method === "tarjeta_credito" ? null : current.account_id;
-    const newWallet = next.payment_method === "tarjeta_credito" ? null : walletIdFor(next.account_id);
+    const newWallet = nextMethod === "tarjeta_credito" ? null : walletIdFor(next.account_id, nextMethod);
 
     const { error } = await supabase
       .from("transactions")
@@ -796,11 +865,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     await refresh();
   };
 
-  const primaryAccount =
-    accounts.find((a) => !a.is_savings_box && a.kind === "caja_ahorro") ??
-    accounts.find((a) => !a.is_savings_box) ??
-    accounts[0] ??
-    null;
+  const primaryAccount = findIcbcAccount(accounts) ?? accounts[0] ?? null;
+  const mpAccount = findMpAccount(accounts);
+  const icbcAccount = findIcbcAccount(accounts);
 
   return (
     <FinanceContext.Provider
@@ -812,6 +879,8 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         categories,
         accounts,
         primaryAccount,
+        mpAccount,
+        icbcAccount,
         cards,
         transactions,
         installments,
@@ -820,6 +889,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         saveTransaction,
         saveInstallmentPurchase,
         saveAccount,
+        updateAccount,
         saveCard,
         updateCard,
         updateTransaction,

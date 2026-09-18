@@ -8,6 +8,7 @@ import { CardManager } from "@/components/cards/card-manager";
 import { CategoryManager } from "@/components/categories/category-manager";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { ZoomToggle } from "@/components/layout/zoom-toggle";
+import { WalletBalances } from "@/components/accounts/wallet-balances";
 import { useFinance } from "@/components/providers/finance-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,7 +23,7 @@ import { InstallApp } from "@/components/pwa/install-app";
 import type { RecurringPayment } from "@/lib/types";
 
 export default function MasPage() {
-  const { recurring, saveRecurring, primaryAccount, cards, transactions } = useFinance();
+  const { recurring, saveRecurring, cards, transactions } = useFinance();
   const { visible } = householdCards(cards, transactions);
   const [isAdmin, setIsAdmin] = useState(false);
   const [fixedName, setFixedName] = useState("");
@@ -47,15 +48,7 @@ export default function MasPage() {
         </p>
       </div>
 
-      {primaryAccount ? (
-        <Card>
-          <CardContent className="pt-5">
-            <p className="text-sm text-muted-foreground">{primaryAccount.name}</p>
-            <p className="text-2xl font-semibold">{formatMoney(Number(primaryAccount.balance), primaryAccount.currency)}</p>
-            <p className="text-xs text-muted-foreground">Saldo de la caja (se mueve con cobros y gastos en efectivo).</p>
-          </CardContent>
-        </Card>
-      ) : null}
+      <WalletBalances />
 
       <CardManager />
 

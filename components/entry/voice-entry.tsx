@@ -40,7 +40,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<CurrencyCode>("ARS");
   const [concept, setConcept] = useState("");
-  const [method, setMethod] = useState<PaymentMethod>("efectivo");
+  const [method, setMethod] = useState<PaymentMethod>("transferencia");
   const [categoryId, setCategoryId] = useState("");
   const [cardId, setCardId] = useState("");
   const [cuotas, setCuotas] = useState("");
@@ -75,8 +75,18 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
   async function confirm() {
     try {
       const n = amountN;
-      if (!concept || !n) {
-        toast.error("Faltan concepto o monto.");
+      if (!concept.trim()) {
+        toast.error("Falta el concepto.");
+        setEdit(true);
+        return;
+      }
+      if (!amount.trim()) {
+        toast.error("Poné el monto. Puede ser 0.");
+        setEdit(true);
+        return;
+      }
+      if (!Number.isFinite(n) || n < 0) {
+        toast.error("El monto no puede ser negativo.");
         setEdit(true);
         return;
       }
@@ -215,7 +225,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
               </Field>
               <Field label="Pago">
                 <Select value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-                  <option value="efectivo">Efectivo</option>
+                  <option value="transferencia">Transferencia</option>
                   <option value="billetera">Mercado Pago</option>
                   <option value="tarjeta_credito">Tarjeta</option>
                 </Select>

@@ -18,7 +18,7 @@ import { es } from "date-fns/locale";
 import { formatMoney, isoDate } from "@/lib/utils";
 import type { CurrencyCode, PaymentMethod } from "@/lib/types";
 
-type Mode = "ingreso" | "efectivo" | "mp" | "tarjeta";
+type Mode = "ingreso" | "transferencia" | "mp" | "tarjeta";
 
 export function QuickManual() {
   const {
@@ -33,7 +33,7 @@ export function QuickManual() {
   } = useFinance();
   const { mine, visible } = householdCards(cards, transactions);
   const conceptRef = useRef<HTMLInputElement>(null);
-  const [mode, setMode] = useState<Mode>("efectivo");
+  const [mode, setMode] = useState<Mode>("mp");
   const [concept, setConcept] = useState("");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<CurrencyCode>("ARS");
@@ -81,8 +81,12 @@ export function QuickManual() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const n = parsedAmount;
-    if (!n) {
-      toast.error("Poné el monto.");
+    if (!amount.trim()) {
+      toast.error("Poné el monto. Puede ser 0.");
+      return;
+    }
+    if (!Number.isFinite(n) || n < 0) {
+      toast.error("El monto no puede ser negativo.");
       return;
     }
     setBusy(true);
@@ -91,7 +95,7 @@ export function QuickManual() {
       const label = concept.trim() || (type === "ingreso" ? "Sueldo" : "Gasto");
       const cat = categories.find((c) => c.id === categoryId) ?? matchCategory(categories, type, label);
       const method: PaymentMethod =
-        mode === "tarjeta" ? "tarjeta_credito" : mode === "mp" ? "billetera" : type === "ingreso" ? "transferencia" : "efectivo";
+        mode === "tarjeta" ? "tarjeta_credito" : mode === "mp" ? "billetera" : "transferencia";
       let resolvedCard = cardId;
       if (mode === "tarjeta" && !resolvedCard) {
         const created = await saveCard({ name: "Visa ICBC", kind: "principal", closing_day: 1, due_day: 14 });
@@ -164,7 +168,7 @@ export function QuickManual() {
         {(
           [
             ["ingreso", "Cobré"],
-            ["efectivo", "Efectivo"],
+            ["transferencia", "Transfer"],
             ["mp", "MP"],
             ["tarjeta", "Tarjeta"],
           ] as const
@@ -177,8 +181,8 @@ export function QuickManual() {
               mode === id
                 ? id === "ingreso"
                   ? "bg-emerald-600 text-white"
-                  : id === "efectivo"
-                    ? "bg-amber-600 text-white"
+                  : id === "transferencia"
+                    ? "bg-indigo-600 text-white"
                     : id === "mp"
                       ? "bg-sky-600 text-white"
                       : "bg-violet-700 text-white"

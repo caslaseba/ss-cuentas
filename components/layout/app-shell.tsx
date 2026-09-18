@@ -10,6 +10,7 @@ import { ZoomToggle } from "@/components/layout/zoom-toggle";
 import { FinanceProvider, useFinance } from "@/components/providers/finance-provider";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
+import { CalculatorWidget } from "@/components/tools/calculator";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -56,6 +57,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          <CalculatorWidget />
           <ZoomToggle compact />
           <ThemeToggle compact />
           <Button size="sm" variant="ghost" onClick={() => void logout()} aria-label="Salir">
@@ -65,7 +67,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="pb-[calc(5.75rem+env(safe-area-inset-bottom))]">
+      <main className="pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
         <div className="mx-auto w-full min-w-0 max-w-lg px-3 py-4 sm:px-4 sm:py-6 md:max-w-2xl xl:max-w-5xl">
           {!online && (
             <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">

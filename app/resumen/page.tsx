@@ -3,24 +3,29 @@
 import Link from "next/link";
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { toast } from "sonner";
 import { PinGate } from "@/components/entry/pin-gate";
 import { TransactionEdit } from "@/components/entry/transaction-edit";
 import { RecurringEdit } from "@/components/entry/recurring-edit";
 import { MovementRow } from "@/components/dashboard/movement-row";
+import { MovementSearch } from "@/components/dashboard/movement-search";
+import { WalletBalances } from "@/components/accounts/wallet-balances";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
 import { MY_CARD_NAME } from "@/lib/finance/cards";
 import { cashRecurringPaid, categoryOriginSplit, categorySlug, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
 import { cardCoversRecurring, isCardRecurring, recurringVia } from "@/lib/finance/recurring";
-import { categoryChipClass, groupCategory, methodBoxClass } from "@/lib/finance/style";
+import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
 import { cn, formatMoney, isoDate, monthKey } from "@/lib/utils";
-import type { RecurringPayment, Transaction } from "@/lib/types";
+import type { PaymentMethod, RecurringPayment, Transaction } from "@/lib/types";
 
 export default function ResumenPage() {
   return (
@@ -65,7 +70,6 @@ function ResumenInner() {
     visaPapa,
     liveStatement,
     quedaSiPagaVisa,
-    now,
   } = view;
   const { unlocked, askPin, pinError, guard, submitPin, closePin } = useEditGate();
   const canEdit = !isPast || unlocked;
@@ -73,6 +77,8 @@ function ResumenInner() {
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [editingFixed, setEditingFixed] = useState<RecurringPayment | null>(null);
   const [payAsk, setPayAsk] = useState<RecurringPayment | null>(null);
+  const [payDate, setPayDate] = useState(isoDate(new Date()));
+  const [payMethod, setPayMethod] = useState<PaymentMethod>("transferencia");
   const [unpayAsk, setUnpayAsk] = useState<RecurringPayment | null>(null);
 
   const mes = monthKey(cursor);
@@ -114,12 +120,6 @@ function ResumenInner() {
     guard(() => setEditingFixed(r), isPast);
   }
 
-  function dueOnMonth(r: RecurringPayment) {
-    const last = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
-    const day = Math.min(Math.max(1, r.due_day), last);
-    return isoDate(isCurrent ? now : new Date(cursor.getFullYear(), cursor.getMonth(), day));
-  }
-
   async function confirmPay() {
     if (!payAsk) return;
     const r = payAsk;
@@ -131,9 +131,9 @@ function ResumenInner() {
         amount: Number(r.amount),
         currency: r.currency,
         concept: r.name,
-        payment_method: "transferencia",
+        payment_method: payMethod,
         category_id: r.category_id,
-        occurred_on: dueOnMonth(r),
+        occurred_on: payDate || isoDate(new Date()),
         source: "recurrente",
       });
       toast.success(`Marcado pagado: ${r.name}`);
@@ -249,6 +249,8 @@ function ResumenInner() {
         </div>
       ) : null}
 
+      <WalletBalances />
+
       <div className="grid grid-cols-2 gap-2">
         <Link
           href={`/resumen/origen/plata?mes=${mes}`}
@@ -256,7 +258,7 @@ function ResumenInner() {
         >
           <p className="text-xs font-medium text-amber-800 dark:text-amber-200">De tu sueldo</p>
           <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">{formatMoney(wallet.gastadoContado, "ARS")}</p>
-          <p className="mt-1 text-xs text-muted-foreground">Efectivo, MP y transferencias</p>
+          <p className="mt-1 text-xs text-muted-foreground">MP y transferencias</p>
         </Link>
         <Link
           href={`/resumen/origen/tarjeta?mes=${mes}`}
@@ -303,40 +305,25 @@ function ResumenInner() {
       ) : null}
 
       {cats.length > 0 ? (
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <h2 className="text-sm font-medium">Por categoría</h2>
-          <p className="text-xs text-muted-foreground">
-            Tocá una para ver cada gasto. Separado: tu sueldo vs tarjeta (va al próximo mes).
-          </p>
+          <div className="grid grid-cols-3 gap-1">
           {cats.map((row) => (
             <Link
               key={row.name}
               href={`/resumen/categoria/${categorySlug(row.name)}?mes=${mes}`}
-              className={cn("block rounded-xl border px-3 py-2", categoryChipClass(groupCategory(row.name)))}
+              className={cn("rounded-md border px-1.5 py-1", categoryChipClass(groupCategory(row.name)))}
             >
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium">{row.name}</span>
-                <span className="font-semibold">{formatMoney(row.total, "ARS")}</span>
-              </div>
-              <div className="mt-2 flex flex-wrap gap-1">
-                {row.sueldo > 0 ? (
-                  <span className={cn("rounded-full border px-2 py-0.5 text-xs font-medium", methodBoxClass("Efectivo"))}>
-                    Tu sueldo {formatMoney(row.sueldo, "ARS")}
-                  </span>
-                ) : null}
-                {row.visa > 0 ? (
-                  <span className={cn("rounded-full border px-2 py-0.5 text-xs font-medium", methodBoxClass("Tarjeta"))}>
-                    Tu Visa {formatMoney(row.visa, "ARS")}
-                  </span>
-                ) : null}
-                {row.papa > 0 ? (
-                  <span className="rounded-full border border-fuchsia-500/30 bg-fuchsia-500/15 px-2 py-0.5 text-xs font-medium text-fuchsia-950 dark:text-fuchsia-100">
-                    Visa papá {formatMoney(row.papa, "ARS")}
-                  </span>
-                ) : null}
-              </div>
+              <p className="truncate text-[11px] font-medium leading-tight">{row.name}</p>
+              <p className="text-[11px] font-semibold leading-tight tabular-nums">{formatMoney(row.total, "ARS")}</p>
+              <p className="truncate text-[9px] leading-tight text-muted-foreground">
+                {[row.sueldo > 0 ? "Sueldo" : null, row.visa > 0 ? "Visa" : null, row.papa > 0 ? "Papá" : null]
+                  .filter(Boolean)
+                  .join(" · ") || "—"}
+              </p>
             </Link>
           ))}
+          </div>
         </div>
       ) : null}
 
@@ -375,47 +362,72 @@ function ResumenInner() {
                 </p>
               </button>
               {!isFuture ? (
-                <Button size="sm" onClick={() => guard(() => setPayAsk(r), isPast)}>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    guard(() => {
+                      setPayDate(isoDate(new Date()));
+                      setPayMethod("transferencia");
+                      setPayAsk(r);
+                    }, isPast)
+                  }
+                >
                   Pagué
                 </Button>
               ) : null}
             </div>
           ))}
-          {paid.map((r) => (
+          {paid.map((r) => {
+            const linked = linkedPay(r);
+            return (
             <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2">
               <button type="button" className="min-w-0 text-left" onClick={() => selectFixed(r)}>
                 <p className="text-sm font-medium">{r.name}</p>
-                <p className="text-xs text-muted-foreground">Pagado este mes · {formatMoney(Number(r.amount), r.currency)}</p>
+                <p className="text-xs text-muted-foreground">
+                  Pagado{linked ? ` el ${format(parseISO(linked.occurred_on), "d/M")}` : " este mes"} · {formatMoney(Number(r.amount), r.currency)}
+                </p>
               </button>
               <Button size="sm" variant="outline" onClick={() => guard(() => setUnpayAsk(r), isPast)}>
                 Deshacer
               </Button>
             </div>
-          ))}
+            );
+          })}
         </div>
       ) : null}
 
       <div className="space-y-2 pb-4">
-        <h2 className="text-sm font-medium">Cada movimiento</h2>
-        <p className="text-xs text-muted-foreground">
-          {isFuture
-            ? "Cuotas y fijos que se van a descontar. Lo estimado no se puede editar."
-            : "Efectivo, transferencia, Mercado Pago y Visa (tuya o de papá). Lo de tarjeta va al próximo mes."}
-        </p>
-        {monthMoves.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Todavía no hay movimientos.</p>
-        ) : (
-          monthMoves.map((t) => (
-            <MovementRow
-              key={t.id}
-              tx={t}
-              categories={categories}
-              cards={cards}
-              installments={installments}
-              onSelect={selectTx}
-            />
-          ))
-        )}
+        <MovementSearch
+          transactions={transactions}
+          monthTransactions={monthMoves}
+          categories={categories}
+          cards={cards}
+          installments={installments}
+          onSelect={selectTx}
+          fallback={
+            <>
+              <p className="text-xs text-muted-foreground">
+                {isFuture
+                  ? "Cuotas y fijos que se van a descontar. Lo estimado no se puede editar."
+                  : "Transferencia, Mercado Pago y Visa (tuya o de papá). Lo de tarjeta va al próximo mes."}
+              </p>
+              {monthMoves.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Todavía no hay movimientos.</p>
+              ) : (
+                monthMoves.map((t) => (
+                  <MovementRow
+                    key={t.id}
+                    tx={t}
+                    categories={categories}
+                    cards={cards}
+                    installments={installments}
+                    onSelect={selectTx}
+                  />
+                ))
+              )}
+            </>
+          }
+        />
       </div>
 
       <TransactionEdit tx={editing} open={Boolean(editing)} onOpenChange={(v) => !v && setEditing(null)} />
@@ -432,6 +444,19 @@ function ResumenInner() {
               ? `Se descuenta ${formatMoney(Number(payAsk.amount), payAsk.currency)} de tu sueldo por ${payAsk.name}.`
               : null}
           </p>
+          <div className="mt-3 space-y-2">
+            <div>
+              <Label>Fecha del pago</Label>
+              <Input className="mt-1.5" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+            </div>
+            <div>
+              <Label>Salió de</Label>
+              <Select className="mt-1.5" value={payMethod} onChange={(e) => setPayMethod(e.target.value as PaymentMethod)}>
+                <option value="transferencia">Caja ICBC</option>
+                <option value="billetera">Mercado Pago</option>
+              </Select>
+            </div>
+          </div>
           <div className="mt-4 flex gap-2">
             <Button className="flex-1" onClick={() => void confirmPay()}>
               Sí, pagué

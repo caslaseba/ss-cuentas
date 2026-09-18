@@ -18,7 +18,6 @@ const ARS_HINTS = /\b(pesos?|ars|plata|mango(?:s)?)\b/i;
 const EXTENSION_HINTS = /\b(extensi[oó]n|adicional|papa|papi)\b/i;
 const CARD_BRANDS = /\b(visa|mastercard|master|amex|naranja|cabal|maestro)\b/i;
 const CARD_HINTS = /\b(tarjeta|cr[eé]dito|visa|mastercard|amex|naranja|cabal)\b/i;
-const CASH_HINTS = /\b(efectivo|contado|mano)\b/i;
 const DEBIT_HINTS = /\b(d[eé]bito)\b/i;
 const WALLET_HINTS = /\b(mp|mercadopago|uala|naranja x|billetera)\b/i;
 
@@ -158,8 +157,7 @@ function inferPayment(text: string): {
   }
   if (WALLET_HINTS.test(text)) return { method: "billetera", cardHint: null, cardNameHint: null };
   if (DEBIT_HINTS.test(text)) return { method: "debito", cardHint: null, cardNameHint: null };
-  if (CASH_HINTS.test(text)) return { method: "efectivo", cardHint: null, cardNameHint: null };
-  return { method: "efectivo", cardHint: null, cardNameHint: null };
+  return { method: "transferencia", cardHint: null, cardNameHint: null };
 }
 
 function inferConcept(raw: string): string {

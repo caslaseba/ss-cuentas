@@ -50,8 +50,8 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
 
   async function save() {
     const n = parseAmountInput(amount);
-    if (!name.trim() || !n) {
-      toast.error("Poné nombre y monto.");
+    if (!name.trim() || !amount.trim() || n < 0) {
+      toast.error("Poné nombre y monto. Puede ser 0.");
       return;
     }
     const onCard = payHow !== "plata";

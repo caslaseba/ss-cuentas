@@ -77,7 +77,7 @@ function EditForm({ tx, onDone }: { tx: Transaction; onDone: () => void }) {
   const alreadyService = Boolean(matching && isCardRecurring(matching));
   const [concept, setConcept] = useState(tx.concept);
   const [amount, setAmount] = useState(formatAmountFromNumber(Number(tx.amount)));
-  const [method, setMethod] = useState<PaymentMethod>(tx.payment_method);
+  const [method, setMethod] = useState<PaymentMethod>(tx.payment_method === "efectivo" ? "transferencia" : tx.payment_method);
   const [categoryId, setCategoryId] = useState(tx.category_id ?? "");
   const [cardId, setCardId] = useState(tx.credit_card_id ?? visible[0]?.id ?? "");
   const [date, setDate] = useState(tx.occurred_on);
@@ -226,10 +226,9 @@ function EditForm({ tx, onDone }: { tx: Transaction; onDone: () => void }) {
       <div>
         <Label>Medio</Label>
         <Select className="mt-1.5" value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-          <option value="efectivo">Efectivo</option>
           <option value="billetera">Mercado Pago</option>
-          <option value="debito">Débito</option>
           <option value="transferencia">Transferencia</option>
+          <option value="debito">Débito</option>
           <option value="tarjeta_credito">Tarjeta</option>
         </Select>
       </div>

@@ -69,9 +69,8 @@ export function categoryLabel(name: string) {
 }
 
 export function paymentMethodLabel(method: PaymentMethod) {
-  if (method === "efectivo") return "Efectivo";
+  if (method === "efectivo" || method === "transferencia") return "Transferencia";
   if (method === "debito") return "Débito";
-  if (method === "transferencia") return "Transferencia";
   if (method === "billetera") return "Mercado Pago";
   return "Tarjeta";
 }

@@ -85,7 +85,7 @@ function CategoriaInner({ params }: { params: Promise<{ slug: string }> }) {
       {grouped.sueldo.length > 0 ? (
         <section className="space-y-2">
           <h2 className="text-sm font-medium">De tu sueldo</h2>
-          <p className="text-xs text-muted-foreground">Efectivo, Mercado Pago o transferencia.</p>
+          <p className="text-xs text-muted-foreground">Mercado Pago o transferencia.</p>
           {grouped.sueldo.map((t) => (
             <MovementRow
               key={t.id}

@@ -109,7 +109,6 @@ export function categoryTotals(
 export function methodBucketName(method: PaymentMethod) {
   if (method === "billetera") return "Mercado Pago";
   if (method === "tarjeta_credito") return "Tarjeta";
-  if (method === "efectivo") return "Efectivo";
   if (method === "debito") return "Débito";
   return "Transferencia";
 }

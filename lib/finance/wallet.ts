@@ -41,11 +41,9 @@ export function methodBreakdown(
         ? "Mercado Pago"
         : t.payment_method === "tarjeta_credito"
           ? "Tarjeta"
-          : t.payment_method === "efectivo"
-            ? "Efectivo"
-            : t.payment_method === "debito"
-              ? "Débito"
-              : "Transferencia";
+          : t.payment_method === "debito"
+            ? "Débito"
+            : "Transferencia";
     buckets[key] = (buckets[key] ?? 0) + toArs(Number(t.amount), t.currency);
   }
   return Object.entries(buckets)
