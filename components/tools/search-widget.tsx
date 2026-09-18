@@ -17,12 +17,11 @@ export function SearchWidget() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
   const rate = Number(profile?.usd_exchange_rate ?? 0);
-  const tax = Number(profile?.usd_tax_pct ?? 0);
 
   const toArs = useCallback(
     (amount: number, currency: Transaction["currency"]) =>
-      currency === "USD" ? usdToLocal(amount, rate, tax) : amount,
-    [rate, tax],
+      currency === "USD" ? usdToLocal(amount, rate, 0) : amount,
+    [rate],
   );
 
   function select(tx: Transaction) {
