@@ -10,7 +10,6 @@ import { PinGate } from "@/components/entry/pin-gate";
 import { TransactionEdit } from "@/components/entry/transaction-edit";
 import { RecurringEdit } from "@/components/entry/recurring-edit";
 import { MovementRow } from "@/components/dashboard/movement-row";
-import { MovementSearch } from "@/components/dashboard/movement-search";
 import { WalletBalances } from "@/components/accounts/wallet-balances";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -87,10 +86,6 @@ function ResumenInner() {
   const unpaid = cashRecurring.filter((r) => !cashRecurringPaid(r, transactions, cursor, isCurrent));
   const paid = cashRecurring.filter((r) => cashRecurringPaid(r, transactions, cursor, isCurrent));
   const cardServices = isCurrent ? recurring.filter((r) => isCardRecurring(r)) : [];
-  const used = tarjetaAbierta;
-  const limit = Number(mine?.credit_limit ?? 0);
-  const usedPct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
-  const tarjetaHint = isFuture ? "Cuotas proyectadas" : isPast ? "Resumen de ese mes" : "Tu Visa y la de papá";
 
   const linkedPay = (r: RecurringPayment) =>
     transactions.find(
@@ -175,25 +170,25 @@ function ResumenInner() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-lg space-y-5 md:max-w-2xl">
+    <div className="mx-auto w-full min-w-0 max-w-lg space-y-3 md:max-w-2xl">
       <div>
-        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <Button type="button" size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => goMonth(-1)}>
-            ← Anterior
+        <div className="mb-1.5 flex items-center justify-between gap-1">
+          <Button type="button" size="sm" variant="outline" className="h-8 px-2 text-xs" onClick={() => goMonth(-1)}>
+            ←
           </Button>
-          <p className="text-center text-sm font-medium capitalize">{format(cursor, "MMMM yyyy", { locale: es })}</p>
+          <p className="text-center text-xs font-medium capitalize">{format(cursor, "MMMM yyyy", { locale: es })}</p>
           <Button
             type="button"
             size="sm"
             variant="outline"
-            className="w-full sm:w-auto"
+            className="h-8 px-2 text-xs"
             disabled={!canGoNext}
             onClick={() => goMonth(1)}
           >
-            Siguiente →
+            →
           </Button>
         </div>
-        <p className="text-sm font-medium text-muted-foreground">
+        <p className="text-[11px] font-medium text-muted-foreground">
           {isFuture
             ? "Te quedaría de tu sueldo"
             : isCurrent
@@ -201,30 +196,23 @@ function ResumenInner() {
               : "Te quedó de tu sueldo"}
           {estimated ? " (estimado)" : ""}
         </p>
-        <p className="text-3xl font-semibold tracking-tight text-emerald-800 dark:text-emerald-300 sm:text-4xl">
+        <p className="text-xl font-semibold tracking-tight text-emerald-800 dark:text-emerald-300">
           {formatMoney(wallet.queda, "ARS")}
         </p>
         {isFuture && visaMia > 0 ? (
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
             Si pagás tu Visa, te quedarían {formatMoney(quedaSiPagaVisa, "ARS")}
           </p>
         ) : null}
       </div>
 
       {isPast && !unlocked ? (
-        <div className="flex flex-col items-stretch gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-amber-950 dark:text-amber-100">
-              {sealed ? "Mes cerrado" : "Mes anterior"}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {sealed
-                ? "Tarjeta cerrada y cuentas pagadas. Para editar, poné la clave."
-                : "Para no mezclarlo con el mes actual, se edita con clave."}
-            </p>
-          </div>
-          <Button size="sm" variant="outline" onClick={() => guard(() => undefined, true)}>
-            Desbloquear
+        <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
+          <p className="text-[11px] font-medium text-amber-950 dark:text-amber-100">
+            {sealed ? "Mes cerrado · clave para editar" : "Mes anterior · clave para editar"}
+          </p>
+          <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => guard(() => undefined, true)}>
+            Clave
           </Button>
         </div>
       ) : null}
@@ -236,14 +224,11 @@ function ResumenInner() {
       ) : null}
 
       {leftover > 0 && !alreadyCarried && !isFuture ? (
-        <div className="flex flex-col items-stretch gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-emerald-900 dark:text-emerald-200">Sobra del mes anterior</p>
-            <p className="text-xs text-muted-foreground">
-              En {format(shiftMonth(cursor, -1), "MMMM", { locale: es })} te quedó {formatMoney(leftover, "ARS")}.
-            </p>
-          </div>
-          <Button size="sm" onClick={() => guard(() => void bringLeftover(), isPast)}>
+        <div className="flex items-center justify-between gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5">
+          <p className="text-[11px] text-emerald-900 dark:text-emerald-200">
+            Sobra {format(shiftMonth(cursor, -1), "MMMM", { locale: es })} {formatMoney(leftover, "ARS")}
+          </p>
+          <Button size="sm" className="h-7 px-2 text-xs" onClick={() => guard(() => void bringLeftover(), isPast)}>
             Traer
           </Button>
         </div>
@@ -251,62 +236,60 @@ function ResumenInner() {
 
       <WalletBalances />
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-3 gap-1">
         <Link
           href={`/resumen/origen/plata?mes=${mes}`}
-          className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-center"
+          className="rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-1 text-left"
         >
-          <p className="text-xs font-medium text-amber-800 dark:text-amber-200">De tu sueldo</p>
-          <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">{formatMoney(wallet.gastadoContado, "ARS")}</p>
-          <p className="mt-1 text-xs text-muted-foreground">MP y transferencias</p>
+          <p className="truncate text-[11px] font-medium leading-tight text-amber-800 dark:text-amber-200">De tu sueldo</p>
+          <p className="text-[11px] font-semibold leading-tight tabular-nums text-amber-950 dark:text-amber-100">
+            {formatMoney(wallet.gastadoContado, "ARS")}
+          </p>
         </Link>
         <Link
           href={`/resumen/origen/tarjeta?mes=${mes}`}
-          className="rounded-2xl border border-violet-500/30 bg-violet-500/10 px-3 py-3 text-center"
+          className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1 text-left"
         >
-          <p className="text-xs font-medium text-violet-800 dark:text-violet-200">
-            {isFuture ? "Tarjeta · cuotas" : isPast ? "Tarjeta de ese mes" : "Tarjeta · próximo mes"}
+          <p className="truncate text-[11px] font-medium leading-tight text-violet-800 dark:text-violet-200">
+            {isFuture ? "Tarjeta · cuotas" : isPast ? "Tarjeta" : "Tarjeta · próximo"}
           </p>
-          <p className="text-sm font-semibold text-violet-950 dark:text-violet-100">{formatMoney(tarjetaAbierta, "ARS")}</p>
-          <p className="mt-1 text-xs text-muted-foreground">{tarjetaHint}</p>
+          <p className="text-[11px] font-semibold leading-tight tabular-nums text-violet-950 dark:text-violet-100">
+            {formatMoney(tarjetaAbierta, "ARS")}
+          </p>
         </Link>
+        {mine ? (
+          <div className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1">
+            <p className="truncate text-[11px] font-medium leading-tight text-violet-950 dark:text-violet-100">Tu Visa</p>
+            <p className="text-[11px] font-semibold leading-tight tabular-nums text-violet-950 dark:text-violet-50">
+              {formatMoney(visaMia, "ARS")}
+            </p>
+            {liveStatement ? (
+              <p className="truncate text-[9px] leading-tight text-muted-foreground">
+                cierra {format(liveStatement.cycle.end, "d/M")}
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <div />
+        )}
       </div>
 
       {mine ? (
-        <div className="rounded-2xl border border-violet-500/30 bg-violet-500/10 px-3 py-3">
-          <p className="text-sm font-medium text-violet-950 dark:text-violet-100">Consumo de tu tarjeta</p>
-          <p className="text-2xl font-semibold text-violet-950 dark:text-violet-50">{formatMoney(used, "ARS")}</p>
-          <p className="text-xs text-muted-foreground">
-            {MY_CARD_NAME} {formatMoney(visaMia, "ARS")}
-            {papa ? ` · ${papa.name} ${formatMoney(visaPapa, "ARS")}` : ""}
-            {liveStatement ? ` · cierra ${format(liveStatement.cycle.end, "d/M")}` : ""}
-          </p>
-          {limit > 0 ? (
-            <>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/15">
-                <div className="h-full rounded-full bg-violet-500" style={{ width: `${Math.max(6, usedPct)}%` }} />
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {formatMoney(used, "ARS")} de {formatMoney(limit, "ARS")}
-              </p>
-            </>
-          ) : null}
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <Button asChild size="sm" variant="outline">
-              <Link href={`/resumen/origen/visa?mes=${mes}`}>Tu Visa</Link>
+        <div className="grid grid-cols-2 gap-1">
+          <Button asChild size="sm" variant="outline" className="h-7 px-2 text-[11px]">
+            <Link href={`/resumen/origen/visa?mes=${mes}`}>Tu Visa {formatMoney(visaMia, "ARS")}</Link>
+          </Button>
+          {papa ? (
+            <Button asChild size="sm" variant="outline" className="h-7 px-2 text-[11px]">
+              <Link href={`/resumen/origen/papa?mes=${mes}`}>Papá {formatMoney(visaPapa, "ARS")}</Link>
             </Button>
-            {papa ? (
-              <Button asChild size="sm" variant="outline">
-                <Link href={`/resumen/origen/papa?mes=${mes}`}>Visa papá</Link>
-              </Button>
-            ) : null}
-          </div>
+          ) : null}
         </div>
       ) : null}
 
       {cats.length > 0 ? (
         <div className="space-y-1.5">
-          <h2 className="text-sm font-medium">Por categoría</h2>
+          <h2 className="text-xs font-medium">Por categoría</h2>
           <div className="grid grid-cols-3 gap-1">
           {cats.map((row) => (
             <Link
@@ -328,8 +311,8 @@ function ResumenInner() {
       ) : null}
 
       {unpaid.length > 0 || paid.length > 0 || cardServices.length > 0 ? (
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium">Servicios del mes</h2>
+        <div className="space-y-1">
+          <h2 className="text-xs font-medium">Servicios del mes</h2>
           {cardServices.map((r) => {
             const via = recurringVia(r);
             const card = cards.find((c) => c.id === via.cardId);
@@ -339,24 +322,24 @@ function ResumenInner() {
                 key={r.id}
                 type="button"
                 onClick={() => selectFixed(r)}
-                className="flex w-full items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-left"
+                className="flex w-full items-center justify-between gap-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-left"
               >
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">{r.name}</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="truncate text-[11px] font-medium">{r.name}</p>
+                  <p className="truncate text-[10px] text-muted-foreground">
                     {card?.name ?? MY_CARD_NAME}
-                    {onCard ? " · ya está en el resumen" : " · se debita con la tarjeta"}
+                    {onCard ? " · en el resumen" : " · se debita"}
                   </p>
                 </div>
-                <span className="shrink-0 text-sm font-medium">{formatMoney(Number(r.amount), r.currency)}</span>
+                <span className="shrink-0 text-[11px] font-medium">{formatMoney(Number(r.amount), r.currency)}</span>
               </button>
             );
           })}
           {unpaid.map((r) => (
-            <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-teal-500/30 bg-teal-500/10 px-3 py-2">
+            <div key={r.id} className="flex items-center justify-between gap-2 rounded-md border border-teal-500/30 bg-teal-500/10 px-2 py-1">
               <button type="button" className="min-w-0 text-left" onClick={() => selectFixed(r)}>
-                <p className="text-sm font-medium">{r.name}</p>
-                <p className="text-xs text-muted-foreground">
+                <p className="truncate text-[11px] font-medium">{r.name}</p>
+                <p className="text-[10px] text-muted-foreground">
                   Día {r.due_day} · {formatMoney(Number(r.amount), r.currency)}
                   {isFuture ? " · se descuenta" : ""}
                 </p>
@@ -364,6 +347,7 @@ function ResumenInner() {
               {!isFuture ? (
                 <Button
                   size="sm"
+                  className="h-7 px-2 text-xs"
                   onClick={() =>
                     guard(() => {
                       setPayDate(isoDate(new Date()));
@@ -380,14 +364,14 @@ function ResumenInner() {
           {paid.map((r) => {
             const linked = linkedPay(r);
             return (
-            <div key={r.id} className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2">
+            <div key={r.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1">
               <button type="button" className="min-w-0 text-left" onClick={() => selectFixed(r)}>
-                <p className="text-sm font-medium">{r.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  Pagado{linked ? ` el ${format(parseISO(linked.occurred_on), "d/M")}` : " este mes"} · {formatMoney(Number(r.amount), r.currency)}
+                <p className="truncate text-[11px] font-medium">{r.name}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  Pagado{linked ? ` el ${format(parseISO(linked.occurred_on), "d/M")}` : ""} · {formatMoney(Number(r.amount), r.currency)}
                 </p>
               </button>
-              <Button size="sm" variant="outline" onClick={() => guard(() => setUnpayAsk(r), isPast)}>
+              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => guard(() => setUnpayAsk(r), isPast)}>
                 Deshacer
               </Button>
             </div>
@@ -396,38 +380,27 @@ function ResumenInner() {
         </div>
       ) : null}
 
-      <div className="space-y-2 pb-4">
-        <MovementSearch
-          transactions={transactions}
-          monthTransactions={monthMoves}
-          categories={categories}
-          cards={cards}
-          installments={installments}
-          onSelect={selectTx}
-          fallback={
-            <>
-              <p className="text-xs text-muted-foreground">
-                {isFuture
-                  ? "Cuotas y fijos que se van a descontar. Lo estimado no se puede editar."
-                  : "Transferencia, Mercado Pago y Visa (tuya o de papá). Lo de tarjeta va al próximo mes."}
-              </p>
-              {monthMoves.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Todavía no hay movimientos.</p>
-              ) : (
-                monthMoves.map((t) => (
-                  <MovementRow
-                    key={t.id}
-                    tx={t}
-                    categories={categories}
-                    cards={cards}
-                    installments={installments}
-                    onSelect={selectTx}
-                  />
-                ))
-              )}
-            </>
-          }
-        />
+      <div className="space-y-1.5 pb-4">
+        <h2 className="text-xs font-medium">Cada movimiento</h2>
+        <p className="text-[11px] text-muted-foreground">
+          {isFuture
+            ? "Cuotas y fijos que se van a descontar."
+            : "Buscá con la lupa de arriba. Acá está el mes."}
+        </p>
+        {monthMoves.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Todavía no hay movimientos.</p>
+        ) : (
+          monthMoves.map((t) => (
+            <MovementRow
+              key={t.id}
+              tx={t}
+              categories={categories}
+              cards={cards}
+              installments={installments}
+              onSelect={selectTx}
+            />
+          ))
+        )}
       </div>
 
       <TransactionEdit tx={editing} open={Boolean(editing)} onOpenChange={(v) => !v && setEditing(null)} />

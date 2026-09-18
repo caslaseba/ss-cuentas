@@ -11,6 +11,7 @@ import { FinanceProvider, useFinance } from "@/components/providers/finance-prov
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { CalculatorWidget } from "@/components/tools/calculator";
+import { SearchWidget } from "@/components/tools/search-widget";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -57,6 +58,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          <SearchWidget />
           <CalculatorWidget />
           <ZoomToggle compact />
           <ThemeToggle compact />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Calculator } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -14,10 +14,28 @@ const ROWS = [
   ["0", ","],
 ] as const;
 
+function keyToPress(e: KeyboardEvent) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return null;
+  const { key, code } = e;
+  if (key >= "0" && key <= "9") return key;
+  if (code.startsWith("Numpad") && /Numpad\d/.test(code)) return code.slice(-1);
+  if (key === "," || key === "." || code === "NumpadDecimal") return ",";
+  if (key === "+" || code === "NumpadAdd") return "+";
+  if (key === "-" || code === "NumpadSubtract") return "−";
+  if (key === "*" || code === "NumpadMultiply") return "×";
+  if (key === "/" || code === "NumpadDivide") return "÷";
+  if (key === "Enter" || key === "=" || code === "NumpadEnter") return "=";
+  if (key === "Backspace") return "⌫";
+  if (key === "Delete") return "C";
+  return null;
+}
+
 export function CalculatorWidget() {
   const [open, setOpen] = useState(false);
   const [expr, setExpr] = useState("0");
   const [error, setError] = useState(false);
+  const exprRef = useRef(expr);
+  exprRef.current = expr;
 
   function toJs(raw: string) {
     return raw.replace(/×/g, "*").replace(/÷/g, "/").replace(/−/g, "-").replace(/,/g, ".");
@@ -45,7 +63,7 @@ export function CalculatorWidget() {
       return;
     }
     if (key === "=") {
-      const value = resultOf(expr);
+      const value = resultOf(exprRef.current);
       if (value == null) {
         setError(true);
         return;
@@ -58,6 +76,18 @@ export function CalculatorWidget() {
       return `${v}${key}`;
     });
   }
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      const mapped = keyToPress(e);
+      if (!mapped) return;
+      e.preventDefault();
+      press(mapped);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
 
   return (
     <>
@@ -76,8 +106,9 @@ export function CalculatorWidget() {
           <DialogHeader>
             <DialogTitle>Calculadora</DialogTitle>
           </DialogHeader>
+          <p className="text-xs text-muted-foreground">También podés usar el teclado numérico.</p>
           <p
-            className={`rounded-xl border bg-muted px-3 py-3 text-right text-2xl font-semibold tabular-nums ${error ? "text-destructive" : ""}`}
+            className={`mt-2 rounded-xl border bg-muted px-3 py-3 text-right text-2xl font-semibold tabular-nums ${error ? "text-destructive" : ""}`}
           >
             {expr}
           </p>
