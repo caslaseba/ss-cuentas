@@ -49,13 +49,10 @@ export function methodChipClass(method: PaymentMethod, type: Transaction["type"]
   if (method === "tarjeta_credito") {
     return "bg-violet-500/15 text-violet-900 border-violet-500/30 dark:text-violet-100 dark:border-violet-300/40";
   }
-  if (method === "billetera") {
-    return "bg-sky-500/15 text-sky-900 border-sky-500/30 dark:text-sky-100 dark:border-sky-300/40";
-  }
   if (method === "debito") {
     return "bg-cyan-500/15 text-cyan-900 border-cyan-500/30 dark:text-cyan-100 dark:border-cyan-300/40";
   }
-  if (method === "transferencia") {
+  if (method === "transferencia" || method === "billetera" || method === "efectivo") {
     return "bg-indigo-500/15 text-indigo-900 border-indigo-500/30 dark:text-indigo-100 dark:border-indigo-300/40";
   }
   return "bg-amber-500/15 text-amber-900 border-amber-500/30 dark:text-amber-100 dark:border-amber-300/40";
@@ -64,14 +61,14 @@ export function methodChipClass(method: PaymentMethod, type: Transaction["type"]
 export function movementAmountClass(tx: Transaction) {
   if (tx.type === "ingreso") return "text-emerald-800 dark:text-emerald-300";
   if (tx.payment_method === "tarjeta_credito") return "text-violet-800 dark:text-violet-200";
-  if (tx.payment_method === "billetera") return "text-sky-800 dark:text-sky-200";
+  if (tx.payment_method === "billetera" || tx.payment_method === "transferencia") return "text-indigo-800 dark:text-indigo-200";
   return "text-amber-800 dark:text-amber-200";
 }
 
 export function movementRowClass(tx: Transaction) {
   if (tx.type === "ingreso") return "border-emerald-500/25 bg-emerald-500/10";
   if (tx.payment_method === "tarjeta_credito") return "border-violet-500/25 bg-violet-500/10";
-  if (tx.payment_method === "billetera") return "border-sky-500/25 bg-sky-500/10";
+  if (tx.payment_method === "billetera" || tx.payment_method === "transferencia") return "border-indigo-500/25 bg-indigo-500/10";
   return "border-amber-500/25 bg-amber-500/10";
 }
 
@@ -107,7 +104,7 @@ export function categoryTotals(
 }
 
 export function methodBucketName(method: PaymentMethod) {
-  if (method === "billetera") return "Mercado Pago";
+  if (method === "billetera") return "Transferencia";
   if (method === "tarjeta_credito") return "Tarjeta";
   if (method === "debito") return "Débito";
   return "Transferencia";

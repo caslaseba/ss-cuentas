@@ -37,9 +37,7 @@ export function methodBreakdown(
   const buckets: Record<string, number> = {};
   for (const t of transactions.filter((x) => x.type === "egreso")) {
     const key =
-      t.payment_method === "billetera"
-        ? "Mercado Pago"
-        : t.payment_method === "tarjeta_credito"
+      t.payment_method === "tarjeta_credito"
           ? "Tarjeta"
           : t.payment_method === "debito"
             ? "Débito"

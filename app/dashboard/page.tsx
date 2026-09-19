@@ -12,12 +12,12 @@ export default function DashboardPage() {
     <div className="mx-auto w-full max-w-lg space-y-5">
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Cargar</h1>
-        <p className="text-sm text-muted-foreground">Cobró o gastó. El resto está en el resumen.</p>
+        <p className="text-sm text-muted-foreground">Ingreso o gasto. El resto está en el resumen.</p>
       </div>
 
       <div className="flex flex-col items-center gap-2 rounded-3xl border border-dashed border-primary/30 bg-primary/5 px-4 py-6">
         <VoiceEntry />
-        <p className="max-w-xs text-center text-sm text-muted-foreground">
+        <p className="mt-4 max-w-xs text-center text-sm text-muted-foreground">
           Tocá el micrófono. Ej: “Cobré 2 millones” o “Compré milanesa por 15 mil”.
         </p>
       </div>

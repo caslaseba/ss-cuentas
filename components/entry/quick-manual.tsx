@@ -18,7 +18,7 @@ import { es } from "date-fns/locale";
 import { formatMoney, isoDate } from "@/lib/utils";
 import type { CurrencyCode, PaymentMethod } from "@/lib/types";
 
-type Mode = "ingreso" | "transferencia" | "mp" | "tarjeta";
+type Mode = "ingreso" | "transferencia" | "tarjeta";
 
 export function QuickManual() {
   const {
@@ -33,7 +33,7 @@ export function QuickManual() {
   } = useFinance();
   const { mine, visible } = householdCards(cards, transactions);
   const conceptRef = useRef<HTMLInputElement>(null);
-  const [mode, setMode] = useState<Mode>("mp");
+  const [mode, setMode] = useState<Mode>("ingreso");
   const [concept, setConcept] = useState("");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<CurrencyCode>("ARS");
@@ -92,10 +92,11 @@ export function QuickManual() {
     setBusy(true);
     try {
       const type = mode === "ingreso" ? "ingreso" : "egreso";
-      const label = concept.trim() || (type === "ingreso" ? "Sueldo" : "Gasto");
-      const cat = categories.find((c) => c.id === categoryId) ?? matchCategory(categories, type, label);
-      const method: PaymentMethod =
-        mode === "tarjeta" ? "tarjeta_credito" : mode === "mp" ? "billetera" : "transferencia";
+      const cat =
+        categories.find((c) => c.id === categoryId) ??
+        matchCategory(categories, type, concept.trim() || (type === "ingreso" ? "Ingreso" : "Gasto"));
+      const label = concept.trim() || cat?.name || (type === "ingreso" ? "Ingreso" : "Gasto");
+      const method: PaymentMethod = mode === "tarjeta" ? "tarjeta_credito" : "transferencia";
       let resolvedCard = cardId;
       if (mode === "tarjeta" && !resolvedCard) {
         const created = await saveCard({ name: "Visa ICBC", kind: "principal", closing_day: 1, due_day: 14 });
@@ -131,7 +132,7 @@ export function QuickManual() {
           notes,
         });
         toast.success(
-          mode === "ingreso" ? "Cobro sumado" : mode === "tarjeta" ? "Sumado a la tarjeta" : "Descontado",
+          mode === "ingreso" ? "Ingreso sumado" : mode === "tarjeta" ? "Sumado a la tarjeta" : "Descontado",
         );
       }
       if (mode === "tarjeta" && asFixed && cuotaN < 2 && resolvedCard) {
@@ -164,12 +165,11 @@ export function QuickManual() {
 
   return (
     <form className="space-y-3" onSubmit={(e) => void submit(e)}>
-      <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+      <div className="grid grid-cols-3 gap-1">
         {(
           [
-            ["ingreso", "Cobré"],
-            ["transferencia", "Transfer"],
-            ["mp", "MP"],
+            ["ingreso", "Ingreso"],
+            ["transferencia", "Transferencia"],
             ["tarjeta", "Tarjeta"],
           ] as const
         ).map(([id, label]) => (
@@ -183,9 +183,7 @@ export function QuickManual() {
                   ? "bg-emerald-600 text-white"
                   : id === "transferencia"
                     ? "bg-indigo-600 text-white"
-                    : id === "mp"
-                      ? "bg-sky-600 text-white"
-                      : "bg-violet-700 text-white"
+                    : "bg-violet-700 text-white"
                 : "bg-muted text-muted-foreground"
             }`}
           >
@@ -197,7 +195,7 @@ export function QuickManual() {
         ref={conceptRef}
         value={concept}
         onChange={(e) => setConcept(e.target.value)}
-        placeholder={mode === "ingreso" ? "Sueldo, freelance…" : "Milanesa, cigarrillos, asado…"}
+        placeholder={mode === "ingreso" ? "Detalle en observación…" : "Milanesa, cigarrillos, asado…"}
       />
       <div className={mode === "tarjeta" ? "grid grid-cols-[1fr_auto] gap-2" : ""}>
         <AmountInput

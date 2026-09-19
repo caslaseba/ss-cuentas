@@ -68,9 +68,13 @@ export function categoryLabel(name: string) {
   return name;
 }
 
+export function unifyPaymentMethod(method: PaymentMethod): PaymentMethod {
+  if (method === "efectivo" || method === "billetera") return "transferencia";
+  return method;
+}
+
 export function paymentMethodLabel(method: PaymentMethod) {
-  if (method === "efectivo" || method === "transferencia") return "Transferencia";
+  if (method === "tarjeta_credito") return "Tarjeta";
   if (method === "debito") return "Débito";
-  if (method === "billetera") return "Mercado Pago";
-  return "Tarjeta";
+  return "Transferencia";
 }

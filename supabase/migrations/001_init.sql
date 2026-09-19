@@ -197,6 +197,7 @@ begin
   insert into public.categories (user_id, name, type, icon, monthly_limit, is_default)
   values
     (p_user_id, 'Sueldo', 'ingreso', 'wallet', null, true),
+    (p_user_id, 'Transferencia', 'ingreso', 'arrow-left-right', null, true),
     (p_user_id, 'Freelance', 'ingreso', 'briefcase', null, true),
     (p_user_id, 'Inversiones', 'ingreso', 'trending-up', null, true),
     (p_user_id, 'Otros ingresos', 'ingreso', 'plus-circle', null, true),

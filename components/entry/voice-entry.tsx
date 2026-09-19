@@ -226,7 +226,6 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
               <Field label="Pago">
                 <Select value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
                   <option value="transferencia">Transferencia</option>
-                  <option value="billetera">Mercado Pago</option>
                   <option value="tarjeta_credito">Tarjeta</option>
                 </Select>
               </Field>

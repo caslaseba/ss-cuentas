@@ -34,7 +34,7 @@ export default function Home() {
         </div>
         <ul className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            { icon: Mic, title: "Voz o a mano", body: "Cobré / compré milanesa por 15 mil." },
+            { icon: Mic, title: "Voz o a mano", body: "Ingreso o milanesa por 15 mil." },
             { icon: CreditCard, title: "Visa del mes", body: "Lo de tarjeta se suma al resumen." },
             { icon: Smartphone, title: "En el celu", body: "Cargar, resumen y Más." },
             { icon: WifiOff, title: "Offline", body: "Cargás igual; sincroniza al reconectar." },

@@ -14,7 +14,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { householdCards } from "@/lib/finance/cards";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
-import { paymentMethodLabel } from "@/lib/finance/match";
+import { paymentMethodLabel, unifyPaymentMethod } from "@/lib/finance/match";
 import { findRecurringByName, isCardRecurring } from "@/lib/finance/recurring";
 import { addMonths, planProgress } from "@/lib/finance/settlement";
 import { observationOf, withObservation } from "@/lib/finance/tx-notes";
@@ -52,7 +52,7 @@ export function TransactionEdit({
         <DialogHeader>
           <DialogTitle>Editar movimiento</DialogTitle>
         </DialogHeader>
-        <EditForm tx={tx} onDone={() => onOpenChange(false)} />
+        <EditForm key={tx.id} tx={tx} onDone={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   );
@@ -75,9 +75,9 @@ function EditForm({ tx, onDone }: { tx: Transaction; onDone: () => void }) {
   const { visible } = householdCards(cards, transactions);
   const matching = findRecurringByName(recurring, tx.concept);
   const alreadyService = Boolean(matching && isCardRecurring(matching));
-  const [concept, setConcept] = useState(tx.concept);
+  const [concept, setConcept] = useState(tx.concept.replace(/\s*\(cuota \d+\/\d+\)\s*$/i, "").trim() || tx.concept);
   const [amount, setAmount] = useState(formatAmountFromNumber(Number(tx.amount)));
-  const [method, setMethod] = useState<PaymentMethod>(tx.payment_method === "efectivo" ? "transferencia" : tx.payment_method);
+  const [method, setMethod] = useState<PaymentMethod>(unifyPaymentMethod(tx.payment_method));
   const [categoryId, setCategoryId] = useState(tx.category_id ?? "");
   const [cardId, setCardId] = useState(tx.credit_card_id ?? visible[0]?.id ?? "");
   const [date, setDate] = useState(tx.occurred_on);
@@ -127,13 +127,14 @@ function EditForm({ tx, onDone }: { tx: Transaction; onDone: () => void }) {
         });
       }
       await updateTransaction(tx.id, {
-        concept: plan ? `${cleaned} (cuota ${cuotaPreview.cur}/${cuotaPreview.tot})` : cleaned,
+        concept: cleaned,
         amount: plan ? parseAmountInput(cuotaAmount) || n : n,
         payment_method: method,
         category_id: categoryId || null,
         credit_card_id: method === "tarjeta_credito" ? cardId || null : null,
         occurred_on: date,
         notes: withObservation(tx.notes, observation),
+        installment_number: plan ? cuotaPreview.cur : tx.installment_number,
       });
       if (tx.type === "egreso") {
         if (asService && canBeService && cardId) {
@@ -226,7 +227,6 @@ function EditForm({ tx, onDone }: { tx: Transaction; onDone: () => void }) {
       <div>
         <Label>Medio</Label>
         <Select className="mt-1.5" value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-          <option value="billetera">Mercado Pago</option>
           <option value="transferencia">Transferencia</option>
           <option value="debito">Débito</option>
           <option value="tarjeta_credito">Tarjeta</option>

@@ -116,7 +116,6 @@ export function ManualEntryForm() {
               <option value="efectivo">Efectivo</option>
               <option value="debito">Débito</option>
               <option value="transferencia">Transferencia</option>
-              <option value="billetera">Billetera</option>
               <option value="tarjeta_credito">Tarjeta de crédito</option>
             </Select>
           </Field>

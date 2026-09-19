@@ -155,7 +155,7 @@ function inferPayment(text: string): {
   if (CARD_HINTS.test(text) || brand) {
     return { method: "tarjeta_credito", cardHint: "principal", cardNameHint: brand };
   }
-  if (WALLET_HINTS.test(text)) return { method: "billetera", cardHint: null, cardNameHint: null };
+  if (WALLET_HINTS.test(text)) return { method: "transferencia", cardHint: null, cardNameHint: null };
   if (DEBIT_HINTS.test(text)) return { method: "debito", cardHint: null, cardNameHint: null };
   return { method: "transferencia", cardHint: null, cardNameHint: null };
 }

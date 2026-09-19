@@ -101,12 +101,11 @@ export function MovementSearch({
         <Select value={filters.type} onChange={(e) => patch({ type: e.target.value as SearchFilters["type"] })}>
           <option value="todos">Todos</option>
           <option value="egreso">Gastos</option>
-          <option value="ingreso">Cobros</option>
+          <option value="ingreso">Ingresos</option>
         </Select>
         <Select value={filters.method} onChange={(e) => patch({ method: e.target.value as SearchFilters["method"] })}>
           <option value="todos">Cualquier medio</option>
           <option value="plata">Transferencia</option>
-          <option value="mp">Mercado Pago</option>
           <option value="tarjeta">Tarjeta</option>
         </Select>
         <Select
@@ -133,13 +132,26 @@ export function MovementSearch({
             <p className="text-xs text-muted-foreground">Nada coincide.</p>
           ) : (
             <>
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
-                <p className="text-[11px] font-medium text-amber-950 dark:text-amber-100">
-                  Gastos de esta búsqueda {formatMoney(totals.gastos, "ARS")}
-                </p>
-                {totals.cobros > 0 ? (
+              <div className="space-y-1">
+                <div className="rounded-lg border border-border bg-muted/40 px-2 py-1.5">
+                  <p className="text-[11px] text-muted-foreground">Total filtrado</p>
+                  <p className="text-sm font-semibold tabular-nums">
+                    {formatMoney(totals.ahora + totals.tarjeta + (filters.type === "ingreso" ? totals.cobros : 0), "ARS")}
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
+                    <p className="text-[11px] font-medium text-amber-950 dark:text-amber-100">Plata ahora</p>
+                    <p className="text-[11px] font-semibold tabular-nums">{formatMoney(totals.ahora, "ARS")}</p>
+                  </div>
+                  <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-2 py-1.5">
+                    <p className="text-[11px] font-medium text-violet-900 dark:text-violet-100">Tarjeta · próximo mes</p>
+                    <p className="text-[11px] font-semibold tabular-nums">{formatMoney(totals.tarjeta, "ARS")}</p>
+                  </div>
+                </div>
+                {totals.cobros > 0 && filters.type !== "ingreso" ? (
                   <p className="text-[11px] text-muted-foreground">
-                    Cobros {formatMoney(totals.cobros, "ARS")} · {totals.count} resultado
+                    Ingresos {formatMoney(totals.cobros, "ARS")} · {totals.count} resultado
                     {totals.count === 1 ? "" : "s"}
                   </p>
                 ) : (

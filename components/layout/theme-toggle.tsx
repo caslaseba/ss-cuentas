@@ -16,6 +16,7 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
       type="button"
       size="sm"
       variant="outline"
+      className={compact ? "h-9 w-9 shrink-0 p-0" : undefined}
       onClick={() => setTheme(dark ? "light" : "dark")}
       aria-label={dark ? "Pasar a blanco" : "Pasar a dark"}
     >

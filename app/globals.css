@@ -66,17 +66,25 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+html {
+  overflow-x: clip;
+  font-size: 18px;
+}
+
+.zoom-content {
+  font-size: calc(1rem * var(--app-zoom, 1));
+}
+
+.chrome-ui {
+  font-size: 18px;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
-  overflow-x: hidden;
+  overflow-x: clip;
   min-height: 100dvh;
-}
-
-html {
-  overflow-x: hidden;
-  font-size: calc(18px * var(--app-zoom, 1));
 }
 
 .app-zoom {

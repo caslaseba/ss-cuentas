@@ -171,6 +171,20 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
       if (p.data) setProfile(p.data as Profile);
       let cats = (c.data ?? []) as Category[];
+      if (!cats.some((x) => x.name === "Transferencia" && x.type === "ingreso")) {
+        const { data: createdTransfer } = await supabase
+          .from("categories")
+          .insert({
+            user_id: user.id,
+            name: "Transferencia",
+            type: "ingreso",
+            icon: "arrow-left-right",
+            is_default: true,
+          })
+          .select("*")
+          .single();
+        if (createdTransfer) cats = [...cats, createdTransfer as Category];
+      }
       if (!cats.some((x) => x.name === "Cigarrillos" && x.type === "egreso")) {
         const { data: created } = await supabase
           .from("categories")
@@ -374,7 +388,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     if (!user) throw new Error("Sin sesión");
 
     const cash = (input.payment_method ?? "transferencia") !== "tarjeta_credito";
-    const method = input.payment_method ?? "transferencia";
+    const method =
+      input.payment_method === "efectivo" || input.payment_method === "billetera"
+        ? "transferencia"
+        : (input.payment_method ?? "transferencia");
     const walletId = input.account_id ?? walletForMethod(accounts, method)?.id ?? null;
 
     const payload = {
@@ -388,7 +405,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       installment_id: input.installment_id ?? null,
       installment_number: input.installment_number ?? null,
       concept: input.concept,
-      payment_method: method === "efectivo" ? "transferencia" : method,
+      payment_method: method,
       occurred_on: input.occurred_on ?? isoDate(new Date()),
       notes: input.notes ?? null,
       source: input.source ?? "manual",
@@ -471,7 +488,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       type: "egreso",
       amount: installmentAmount,
       currency: input.currency,
-      concept: `${input.concept} (cuota ${current}/${input.count})`,
+      concept: input.concept,
       payment_method: "tarjeta_credito",
       credit_card_id: input.credit_card_id,
       category_id: input.category_id ?? null,
@@ -587,7 +604,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     };
     const oldCash = cashDelta(current);
     const newCash = cashDelta(next);
-    const nextMethod = next.payment_method === "efectivo" ? "transferencia" : next.payment_method;
+    const nextMethod =
+      next.payment_method === "efectivo" || next.payment_method === "billetera"
+        ? "transferencia"
+        : next.payment_method;
     next.payment_method = nextMethod;
     const oldWallet = current.payment_method === "tarjeta_credito" ? null : current.account_id;
     const newWallet = nextMethod === "tarjeta_credito" ? null : walletIdFor(next.account_id, nextMethod);
@@ -678,7 +698,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         amount: installmentAmount,
         installment_id: data.id,
         installment_number: currentN,
-        concept: `${tx.concept.replace(/\s*\(cuota \d+\/\d+\)\s*$/i, "")} (cuota ${currentN}/${count})`,
+        concept: tx.concept.replace(/\s*\(cuota \d+\/\d+\)\s*$/i, "").trim() || tx.concept,
         source: "cuota",
       })
       .eq("id", transactionId);
@@ -708,13 +728,11 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
     const linked = transactions.find((t) => t.installment_id === id);
     if (linked) {
-      const base = linked.concept.replace(/\s*\(cuota \d+\/\d+\)\s*$/i, "");
       await supabase
         .from("transactions")
         .update({
           amount,
           installment_number: current,
-          concept: `${base} (cuota ${current}/${count})`,
         })
         .eq("id", linked.id);
     }

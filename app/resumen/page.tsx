@@ -5,12 +5,12 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
+import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { PinGate } from "@/components/entry/pin-gate";
 import { TransactionEdit } from "@/components/entry/transaction-edit";
 import { RecurringEdit } from "@/components/entry/recurring-edit";
-import { MovementRow } from "@/components/dashboard/movement-row";
-import { WalletBalances } from "@/components/accounts/wallet-balances";
+import { MonthMoves } from "@/components/dashboard/month-moves";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ import { cashRecurringPaid, categoryOriginSplit, categorySlug, cursorFromMes, is
 import { cardCoversRecurring, isCardRecurring, recurringVia } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
+import { dueAfterClosing } from "@/lib/finance/settlement";
 import { cn, formatMoney, isoDate, monthKey } from "@/lib/utils";
 import type { PaymentMethod, RecurringPayment, Transaction } from "@/lib/types";
 
@@ -72,6 +73,7 @@ function ResumenInner() {
   } = view;
   const { unlocked, askPin, pinError, guard, submitPin, closePin } = useEditGate();
   const canEdit = !isPast || unlocked;
+  const [hideSueldo, setHideSueldo] = useState(true);
 
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [editingFixed, setEditingFixed] = useState<RecurringPayment | null>(null);
@@ -81,6 +83,10 @@ function ResumenInner() {
   const [unpayAsk, setUnpayAsk] = useState<RecurringPayment | null>(null);
 
   const mes = monthKey(cursor);
+  const closeDate = liveStatement?.cycle.end ?? null;
+  const dueDate = mine && closeDate ? dueAfterClosing(mine, closeDate) : null;
+  const closeLabel = closeDate ? format(closeDate, "d/M") : null;
+  const dueLabel = dueDate ? format(dueDate, "d/M") : null;
   const cats = categoryOriginSplit(cashSpend, openCardTx, categories, mine?.id ?? null, papa?.id ?? null, toArs);
   const cashRecurring = recurring.filter((r) => !isCardRecurring(r));
   const unpaid = cashRecurring.filter((r) => !cashRecurringPaid(r, transactions, cursor, isCurrent));
@@ -188,17 +194,31 @@ function ResumenInner() {
             →
           </Button>
         </div>
-        <p className="text-[11px] font-medium text-muted-foreground">
-          {isFuture
-            ? "Te quedaría de tu sueldo"
-            : isCurrent
-              ? "Te queda de tu sueldo"
-              : "Te quedó de tu sueldo"}
-          {estimated ? " (estimado)" : ""}
-        </p>
-        <p className="text-xl font-semibold tracking-tight text-emerald-800 dark:text-emerald-300">
-          {formatMoney(wallet.queda, "ARS")}
-        </p>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium text-muted-foreground">
+              {isFuture
+                ? "Te quedaría de tu sueldo"
+                : isCurrent
+                  ? "Te queda de tu sueldo"
+                  : "Te quedó de tu sueldo"}
+              {estimated ? " (estimado)" : ""}
+            </p>
+            <p className="text-xl font-semibold tracking-tight text-emerald-800 dark:text-emerald-300">
+              {hideSueldo ? "••••••" : formatMoney(wallet.queda, "ARS")}
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-8 w-8 p-0"
+            aria-label={hideSueldo ? "Mostrar sueldo" : "Ocultar sueldo"}
+            onClick={() => setHideSueldo((v) => !v)}
+          >
+            {hideSueldo ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+          </Button>
+        </div>
         {isFuture && visaMia > 0 ? (
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             Si pagás tu Visa, te quedarían {formatMoney(quedaSiPagaVisa, "ARS")}
@@ -234,58 +254,67 @@ function ResumenInner() {
         </div>
       ) : null}
 
-      <WalletBalances />
-
-      <div className="grid grid-cols-3 gap-1">
+      <div className="grid grid-cols-2 gap-1">
         <Link
           href={`/resumen/origen/plata?mes=${mes}`}
           className="rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-1 text-left"
         >
-          <p className="truncate text-[11px] font-medium leading-tight text-amber-800 dark:text-amber-200">De tu sueldo</p>
+          <p className="truncate text-[11px] font-medium leading-tight text-amber-800 dark:text-amber-200">Mi sueldo</p>
           <p className="text-[11px] font-semibold leading-tight tabular-nums text-amber-950 dark:text-amber-100">
-            {formatMoney(wallet.gastadoContado, "ARS")}
+            {hideSueldo ? "••••" : formatMoney(wallet.gastadoContado, "ARS")}
           </p>
         </Link>
         <Link
-          href={`/resumen/origen/tarjeta?mes=${mes}`}
+          href={`/resumen/origen/visa?mes=${mes}`}
           className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1 text-left"
         >
-          <p className="truncate text-[11px] font-medium leading-tight text-violet-800 dark:text-violet-200">
-            {isFuture ? "Tarjeta · cuotas" : isPast ? "Tarjeta" : "Tarjeta · próximo"}
-          </p>
+          <p className="truncate text-[11px] font-medium leading-tight text-violet-800 dark:text-violet-200">Mi tarjeta</p>
           <p className="text-[11px] font-semibold leading-tight tabular-nums text-violet-950 dark:text-violet-100">
-            {formatMoney(tarjetaAbierta, "ARS")}
+            {formatMoney(visaMia, "ARS")}
           </p>
-        </Link>
-        {mine ? (
-          <div className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1">
-            <p className="truncate text-[11px] font-medium leading-tight text-violet-950 dark:text-violet-100">Tu Visa</p>
-            <p className="text-[11px] font-semibold leading-tight tabular-nums text-violet-950 dark:text-violet-50">
-              {formatMoney(visaMia, "ARS")}
+          {closeLabel ? (
+            <p className="truncate text-[9px] leading-tight text-muted-foreground">
+              cierra {closeLabel}
+              {dueLabel ? ` · vence ${dueLabel}` : ""}
             </p>
-            {liveStatement ? (
+          ) : null}
+        </Link>
+        {papa ? (
+          <Link
+            href={`/resumen/origen/papa?mes=${mes}`}
+            className="rounded-md border border-fuchsia-500/30 bg-fuchsia-500/10 px-1.5 py-1 text-left"
+          >
+            <p className="truncate text-[11px] font-medium leading-tight text-fuchsia-800 dark:text-fuchsia-200">Extensión</p>
+            <p className="text-[11px] font-semibold leading-tight tabular-nums text-fuchsia-950 dark:text-fuchsia-100">
+              {formatMoney(visaPapa, "ARS")}
+            </p>
+            {closeLabel ? (
               <p className="truncate text-[9px] leading-tight text-muted-foreground">
-                cierra {format(liveStatement.cycle.end, "d/M")}
+                cierra {closeLabel}
+                {dueLabel ? ` · vence ${dueLabel}` : ""}
               </p>
             ) : null}
-          </div>
+          </Link>
         ) : (
           <div />
         )}
+        <Link
+          href={`/resumen/origen/tarjeta?mes=${mes}`}
+          className="rounded-md border border-violet-500/40 bg-violet-500/15 px-1.5 py-1 text-left"
+        >
+          <p className="truncate text-[11px] font-medium leading-tight text-violet-900 dark:text-violet-100">
+            Total tarjetas
+          </p>
+          <p className="text-[11px] font-semibold leading-tight tabular-nums text-violet-950 dark:text-violet-50">
+            {formatMoney(tarjetaAbierta, "ARS")}
+          </p>
+          <p className="truncate text-[9px] leading-tight text-muted-foreground">
+            {isPast ? "de ese mes" : "al mes que viene"}
+            {closeLabel ? ` · cierra ${closeLabel}` : ""}
+            {dueLabel ? ` · vence ${dueLabel}` : ""}
+          </p>
+        </Link>
       </div>
-
-      {mine ? (
-        <div className="grid grid-cols-2 gap-1">
-          <Button asChild size="sm" variant="outline" className="h-7 px-2 text-[11px]">
-            <Link href={`/resumen/origen/visa?mes=${mes}`}>Tu Visa {formatMoney(visaMia, "ARS")}</Link>
-          </Button>
-          {papa ? (
-            <Button asChild size="sm" variant="outline" className="h-7 px-2 text-[11px]">
-              <Link href={`/resumen/origen/papa?mes=${mes}`}>Papá {formatMoney(visaPapa, "ARS")}</Link>
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
 
       {cats.length > 0 ? (
         <div className="space-y-1.5">
@@ -311,8 +340,9 @@ function ResumenInner() {
       ) : null}
 
       {unpaid.length > 0 || paid.length > 0 || cardServices.length > 0 ? (
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <h2 className="text-xs font-medium">Servicios del mes</h2>
+          <div className="grid grid-cols-3 gap-1">
           {cardServices.map((r) => {
             const via = recurringVia(r);
             const card = cards.find((c) => c.id === via.cardId);
@@ -322,32 +352,32 @@ function ResumenInner() {
                 key={r.id}
                 type="button"
                 onClick={() => selectFixed(r)}
-                className="flex w-full items-center justify-between gap-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-left"
+                className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1 text-left"
               >
-                <div className="min-w-0">
-                  <p className="truncate text-[11px] font-medium">{r.name}</p>
-                  <p className="truncate text-[10px] text-muted-foreground">
-                    {card?.name ?? MY_CARD_NAME}
-                    {onCard ? " · en el resumen" : " · se debita"}
-                  </p>
-                </div>
-                <span className="shrink-0 text-[11px] font-medium">{formatMoney(Number(r.amount), r.currency)}</span>
+                <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
+                <p className="text-[11px] font-semibold leading-tight tabular-nums">
+                  {formatMoney(Number(r.amount), r.currency)}
+                </p>
+                <p className="truncate text-[9px] leading-tight text-muted-foreground">
+                  {card?.name ?? MY_CARD_NAME}
+                  {onCard ? " · en resumen" : " · se debita"}
+                </p>
               </button>
             );
           })}
           {unpaid.map((r) => (
-            <div key={r.id} className="flex items-center justify-between gap-2 rounded-md border border-teal-500/30 bg-teal-500/10 px-2 py-1">
-              <button type="button" className="min-w-0 text-left" onClick={() => selectFixed(r)}>
-                <p className="truncate text-[11px] font-medium">{r.name}</p>
-                <p className="text-[10px] text-muted-foreground">
-                  Día {r.due_day} · {formatMoney(Number(r.amount), r.currency)}
-                  {isFuture ? " · se descuenta" : ""}
+            <div key={r.id} className="rounded-md border border-teal-500/30 bg-teal-500/10 px-1.5 py-1">
+              <button type="button" className="w-full text-left" onClick={() => selectFixed(r)}>
+                <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
+                <p className="text-[11px] font-semibold leading-tight tabular-nums">
+                  {formatMoney(Number(r.amount), r.currency)}
                 </p>
+                <p className="truncate text-[9px] leading-tight text-muted-foreground">Día {r.due_day}</p>
               </button>
               {!isFuture ? (
                 <Button
                   size="sm"
-                  className="h-7 px-2 text-xs"
+                  className="mt-1 h-6 w-full px-1 text-[10px]"
                   onClick={() =>
                     guard(() => {
                       setPayDate(isoDate(new Date()));
@@ -364,19 +394,28 @@ function ResumenInner() {
           {paid.map((r) => {
             const linked = linkedPay(r);
             return (
-            <div key={r.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1">
-              <button type="button" className="min-w-0 text-left" onClick={() => selectFixed(r)}>
-                <p className="truncate text-[11px] font-medium">{r.name}</p>
-                <p className="text-[10px] text-muted-foreground">
-                  Pagado{linked ? ` el ${format(parseISO(linked.occurred_on), "d/M")}` : ""} · {formatMoney(Number(r.amount), r.currency)}
+            <div key={r.id} className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-1">
+              <button type="button" className="w-full text-left" onClick={() => selectFixed(r)}>
+                <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
+                <p className="text-[11px] font-semibold leading-tight tabular-nums">
+                  {formatMoney(Number(r.amount), r.currency)}
+                </p>
+                <p className="truncate text-[9px] font-medium leading-tight text-emerald-800 dark:text-emerald-200">
+                  PAGADO{linked ? ` ${format(parseISO(linked.occurred_on), "d/M")}` : ""}
                 </p>
               </button>
-              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => guard(() => setUnpayAsk(r), isPast)}>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-1 h-6 w-full px-1 text-[10px]"
+                onClick={() => guard(() => setUnpayAsk(r), isPast)}
+              >
                 Deshacer
               </Button>
             </div>
             );
           })}
+          </div>
         </div>
       ) : null}
 
@@ -385,22 +424,16 @@ function ResumenInner() {
         <p className="text-[11px] text-muted-foreground">
           {isFuture
             ? "Cuotas y fijos que se van a descontar."
-            : "Buscá con la lupa de arriba. Acá está el mes."}
+            : "Orden A-Z. Filtrá por tipo, valor o categoría. Plata ahora no es lo de la tarjeta."}
         </p>
-        {monthMoves.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Todavía no hay movimientos.</p>
-        ) : (
-          monthMoves.map((t) => (
-            <MovementRow
-              key={t.id}
-              tx={t}
-              categories={categories}
-              cards={cards}
-              installments={installments}
-              onSelect={selectTx}
-            />
-          ))
-        )}
+        <MonthMoves
+          transactions={monthMoves}
+          categories={categories}
+          cards={cards}
+          installments={installments}
+          toArs={toArs}
+          onSelect={selectTx}
+        />
       </div>
 
       <TransactionEdit tx={editing} open={Boolean(editing)} onOpenChange={(v) => !v && setEditing(null)} />
@@ -425,8 +458,7 @@ function ResumenInner() {
             <div>
               <Label>Salió de</Label>
               <Select className="mt-1.5" value={payMethod} onChange={(e) => setPayMethod(e.target.value as PaymentMethod)}>
-                <option value="transferencia">Caja ICBC</option>
-                <option value="billetera">Mercado Pago</option>
+                <option value="transferencia">Transferencia</option>
               </Select>
             </div>
           </div>

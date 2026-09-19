@@ -27,7 +27,35 @@ function keyToPress(e: KeyboardEvent) {
   if (key === "Enter" || key === "=" || code === "NumpadEnter") return "=";
   if (key === "Backspace") return "⌫";
   if (key === "Delete") return "C";
+  if (key === "Escape") return "Esc";
   return null;
+}
+
+const OPS = "÷×−+";
+
+function isOp(key: string) {
+  return OPS.includes(key);
+}
+
+function operatorIndex(expr: string) {
+  const start = expr.startsWith("−") ? 1 : 0;
+  for (let i = start; i < expr.length; i++) {
+    if (OPS.includes(expr[i] ?? "")) return i;
+  }
+  return -1;
+}
+
+function nextExpr(current: string, key: string) {
+  if (isOp(key)) {
+    if (current === "0" || current === "") return key === "−" ? "−" : `0${key}`;
+    if (current === "−") return key === "−" ? "−" : `0${key}`;
+    const idx = operatorIndex(current);
+    if (idx >= 0) return `${current.slice(0, idx)}${key}${current.slice(idx + 1)}`;
+    return `${current}${key}`;
+  }
+  if (current === "0" && /[\d,]/.test(key)) return key;
+  if (current === "−" && key === ",") return "−0,";
+  return `${current}${key}`;
 }
 
 export function CalculatorWidget() {
@@ -71,10 +99,7 @@ export function CalculatorWidget() {
       setExpr(formatAmountFromNumber(value));
       return;
     }
-    setExpr((v) => {
-      if (v === "0" && /[\d,]/.test(key)) return key;
-      return `${v}${key}`;
-    });
+    setExpr((v) => nextExpr(v, key));
   }
 
   useEffect(() => {
@@ -82,6 +107,14 @@ export function CalculatorWidget() {
     function onKey(e: KeyboardEvent) {
       const mapped = keyToPress(e);
       if (!mapped) return;
+      if (mapped === "Esc") {
+        if (exprRef.current !== "0") {
+          e.preventDefault();
+          e.stopPropagation();
+          press("C");
+        }
+        return;
+      }
       e.preventDefault();
       press(mapped);
     }
@@ -102,7 +135,15 @@ export function CalculatorWidget() {
         <Calculator className="h-4 w-4" />
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-xs">
+        <DialogContent
+          className="max-w-xs"
+          onEscapeKeyDown={(e) => {
+            if (exprRef.current !== "0") {
+              e.preventDefault();
+              press("C");
+            }
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Calculadora</DialogTitle>
           </DialogHeader>

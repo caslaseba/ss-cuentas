@@ -47,7 +47,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="app-zoom min-h-dvh bg-background">
-      <header className="safe-header sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-border bg-background/80 px-3 py-3 backdrop-blur sm:px-4">
+      <header className="chrome-ui safe-header fixed inset-x-0 top-0 z-30 flex items-center justify-between gap-2 border-b border-border bg-background/95 px-3 py-3 backdrop-blur sm:px-4">
         <div className="min-w-0">
           <p className="truncate font-semibold" suppressHydrationWarning>
             SS Cuentas
@@ -57,7 +57,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             {pendingSync > 0 ? ` · ${pendingSync} pendiente${pendingSync === 1 ? "" : "s"}` : ""}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+        <div className="flex shrink-0 flex-nowrap items-center gap-0.5 sm:gap-1">
           <SearchWidget />
           <CalculatorWidget />
           <ZoomToggle compact />
@@ -69,7 +69,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
+      <main className="zoom-content pt-[calc(4.25rem+env(safe-area-inset-top))] pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
         <div className="mx-auto w-full min-w-0 max-w-lg px-3 py-4 sm:px-4 sm:py-6 md:max-w-2xl xl:max-w-5xl">
           {!online && (
             <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
@@ -97,7 +97,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
         </div>
       </main>
 
-      <nav className="safe-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t border-border bg-background/95 px-2 pt-2 backdrop-blur">
+      <nav className="chrome-ui safe-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t border-border bg-background/95 px-2 pt-2 backdrop-blur">
         {NAV.map((item) => {
           const Icon = item.icon;
           const active =

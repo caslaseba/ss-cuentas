@@ -4,6 +4,7 @@ import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { paymentMethodLabel } from "@/lib/finance/match";
 import { cardOfTx, isProjectedTx } from "@/lib/finance/month-view";
+import { cleanConceptName } from "@/lib/finance/recurring";
 import { planProgress } from "@/lib/finance/settlement";
 import {
   categoryChipClass,
@@ -54,48 +55,48 @@ export function MovementRow({
       type="button"
       onClick={() => onSelect(tx)}
       className={cn(
-        "flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm",
+        "flex w-full items-center justify-between gap-2 rounded-md border px-1.5 py-1 text-left",
         movementRowClass(tx),
       )}
     >
       <div className="min-w-0">
-        <p className="font-medium">{tx.concept}</p>
-        {obs ? <p className="truncate text-xs text-muted-foreground">{obs}</p> : null}
+        <p className="truncate text-[11px] font-medium leading-tight">{cleanConceptName(tx.concept)}</p>
+        {obs ? <p className="truncate text-[9px] leading-tight text-muted-foreground">{obs}</p> : null}
         {plan && (tx.installment_number || progress) ? (
-          <p className="text-xs text-violet-800 dark:text-violet-200">
+          <p className="text-[9px] leading-tight text-violet-800 dark:text-violet-200">
             Cuota {tx.installment_number ?? progress?.current}/{plan.installment_count}
             {progress && !tx.installment_number
               ? progress.isLast
                 ? " · última"
-                : ` · faltan ${progress.remainingAfterThis} (${formatMoney(progress.remainingAmount, plan.currency)})`
+                : ` · faltan ${progress.remainingAfterThis}`
               : null}
           </p>
         ) : null}
-        <div className="mt-1 flex flex-wrap gap-1">
-          <span className={cn("rounded-full border px-2 py-0.5 text-xs font-medium", methodChipClass(tx.payment_method, tx.type))}>
+        <div className="mt-0.5 flex flex-wrap gap-0.5">
+          <span className={cn("rounded-full border px-1.5 py-0 text-[9px] font-medium", methodChipClass(tx.payment_method, tx.type))}>
             {methodName}
           </span>
           {tx.type === "egreso" ? (
-            <span className={cn("rounded-full border px-2 py-0.5 text-xs font-medium", categoryChipClass(catGroup))}>
+            <span className={cn("rounded-full border px-1.5 py-0 text-[9px] font-medium", categoryChipClass(catGroup))}>
               {catGroup}
             </span>
           ) : null}
           {tx.payment_method === "tarjeta_credito" ? (
-            <span className="rounded-full border border-violet-500/40 bg-violet-500/15 px-2 py-0.5 text-xs font-medium text-violet-900 dark:text-violet-100">
-              {projected ? "Proyectada" : "Va al próximo mes"}
+            <span className="rounded-full border border-violet-500/40 bg-violet-500/15 px-1.5 py-0 text-[9px] font-medium text-violet-900 dark:text-violet-100">
+              {projected ? "Proyectada" : "Próx. mes"}
             </span>
           ) : null}
           {projected ? (
-            <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-950 dark:text-amber-100">
+            <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 py-0 text-[9px] font-medium text-amber-950 dark:text-amber-100">
               Estimado
             </span>
           ) : null}
-          <span className="text-xs text-muted-foreground">
+          <span className="text-[9px] text-muted-foreground">
             {format(parseISO(tx.occurred_on), "d MMM", { locale: es })}
           </span>
         </div>
       </div>
-      <span className={cn("shrink-0 font-semibold", movementAmountClass(tx))}>
+      <span className={cn("shrink-0 text-[11px] font-semibold tabular-nums", movementAmountClass(tx))}>
         {sign}
         {formatMoney(Number(tx.amount), tx.currency)}
       </span>
