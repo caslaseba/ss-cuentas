@@ -45,6 +45,16 @@ export function readFinanceSnapshot(userId?: string): FinanceSnapshot | null {
   }
 }
 
+export function clearFinanceSnapshot() {
+  const store = storage();
+  if (!store) return;
+  try {
+    store.removeItem(KEY);
+  } catch {
+    /* private mode */
+  }
+}
+
 export function writeFinanceSnapshot(snap: FinanceSnapshot) {
   const store = storage();
   if (!store) return;

@@ -109,7 +109,7 @@ export function MonthMoves({
         <Select value={filters.method} onChange={(e) => patch({ method: e.target.value as SearchFilters["method"] })}>
           <option value="todos">Medio: todos</option>
           <option value="plata">Plata ahora</option>
-          <option value="tarjeta">Tarjeta (próx.)</option>
+          <option value="tarjeta">Tarjeta</option>
         </Select>
         <Select value={sort} onChange={(e) => setSort(e.target.value as MoveSort)}>
           <option value="az">A → Z</option>
@@ -147,7 +147,7 @@ export function MonthMoves({
               <p className="text-[11px] font-semibold tabular-nums">{formatMoney(totals.ahora, "ARS")}</p>
             </div>
             <div className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1">
-              <p className="text-[10px] font-medium leading-tight text-violet-800 dark:text-violet-200">Tarjeta · próximo mes</p>
+              <p className="text-[10px] font-medium leading-tight text-violet-800 dark:text-violet-200">Tarjeta · este mes</p>
               <p className="text-[11px] font-semibold tabular-nums">{formatMoney(totals.tarjeta, "ARS")}</p>
             </div>
           </div>

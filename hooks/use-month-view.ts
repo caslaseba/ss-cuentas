@@ -3,12 +3,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { useFinance } from "@/components/providers/finance-provider";
 import { householdCards } from "@/lib/finance/cards";
-import { cycleSourceCard, familyCardIds, getBillingCycle, summarizeCard, usdToLocal } from "@/lib/finance/settlement";
 import {
+  cycleSourceCard,
+  familyCardIds,
+  getBillingCycle,
+  inCycle,
+  statementRefForMonth,
+  summarizeCard,
+  usdToLocal,
+} from "@/lib/finance/settlement";
+import {
+  cardChargesInMonth,
   cardRefForMonth,
   cashMonthMoves,
   cashMonthSpend,
   cursorFromMes,
+  isOnOrBeforeClose,
   projectedCashTxs,
   projectedInstallmentTxs,
   spendOnCard,
@@ -48,34 +58,50 @@ export function useMonthView(initial?: Date) {
   const cardRef = cardRefForMonth(cursor, now);
   const monthStatement =
     mine && profile ? summarizeCard(mine, transactions, installments, profile, cards, cardRef) : null;
-  const papaOutsideFamily =
-    Boolean(mine && papa && !familyCardIds(mine, cards).includes(papa.id));
-  const papaStatement =
-    papaOutsideFamily && papa && profile
-      ? summarizeCard(papa, transactions, installments, profile, cards, cardRef)
-      : null;
 
   const cardIds = new Set([
     ...(mine ? familyCardIds(mine, cards) : []),
     ...(papa ? [papa.id] : []),
   ]);
-  const realCardTx = uniqueById([...(monthStatement?.tx ?? []), ...(papaStatement?.tx ?? [])]);
-  const liveCycle = mine ? getBillingCycle(cycleSourceCard(mine, cards), now) : null;
-  const monthsAhead = monthStatement && liveCycle
-    ? (monthStatement.cycle.end.getFullYear() - liveCycle.end.getFullYear()) * 12 +
-      (monthStatement.cycle.end.getMonth() - liveCycle.end.getMonth())
-    : 0;
-  const projectedCuotas = monthStatement
-    ? projectedInstallmentTxs(
-        installments,
-        monthStatement.cycle,
-        realCardTx,
-        transactions,
-        cardIds,
-        monthsAhead,
-      )
-    : [];
-  const openCardTx = uniqueById([...realCardTx, ...projectedCuotas]);
+  const cycleCard = mine
+    ? cycleSourceCard(mine, cards)
+    : papa
+      ? cycleSourceCard(papa, cards)
+      : null;
+  const liveCycle = cycleCard ? getBillingCycle(cycleCard, now) : null;
+  const closingDay = Math.min(28, Math.max(1, Number(cycleCard?.closing_day || 1)));
+
+  function projectFor(monthCursor: Date) {
+    if (!cycleCard || !liveCycle) return [];
+    const ref = statementRefForMonth(cycleCard, monthCursor);
+    const cycle = getBillingCycle(cycleCard, ref);
+    const ahead =
+      (cycle.end.getFullYear() - liveCycle.end.getFullYear()) * 12 +
+      (cycle.end.getMonth() - liveCycle.end.getMonth());
+    if (ahead < 0) return [];
+    const existing = transactions.filter(
+      (t) => t.credit_card_id && cardIds.has(t.credit_card_id) && inCycle(t.occurred_on, cycle),
+    );
+    return projectedInstallmentTxs(installments, cycle, existing, transactions, cardIds, ahead);
+  }
+
+  const openCardTx = uniqueById([
+    ...cardChargesInMonth(transactions, cursor, cardIds),
+    ...projectFor(cursor),
+  ]);
+  const prevMonth = shiftMonth(cursor, -1);
+  const prevPool = uniqueById([
+    ...cardChargesInMonth(transactions, prevMonth, cardIds),
+    ...projectFor(prevMonth),
+  ]);
+  const olderPool = uniqueById([
+    ...cardChargesInMonth(transactions, shiftMonth(cursor, -2), cardIds),
+    ...projectFor(shiftMonth(cursor, -2)),
+  ]);
+  const billBefore = prevPool.filter((t) => isOnOrBeforeClose(t.occurred_on, closingDay));
+  const billAfter = olderPool.filter((t) => !isOnOrBeforeClose(t.occurred_on, closingDay));
+  const sumsNext = openCardTx.filter((t) => isOnOrBeforeClose(t.occurred_on, closingDay));
+  const sumsLater = openCardTx.filter((t) => !isOnOrBeforeClose(t.occurred_on, closingDay));
 
   const realCashMoves = cashMonthMoves(wallet.monthTx);
   const projectedFijos =
@@ -97,13 +123,17 @@ export function useMonthView(initial?: Date) {
   const tarjetaAbierta = openCardTx
     .filter((t) => t.type === "egreso")
     .reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
+  const billMine =
+    spendOnCard(billBefore, mine?.id ?? null, toArs) + spendOnCard(billAfter, mine?.id ?? null, toArs);
+  const billPapa =
+    spendOnCard(billBefore, papa?.id ?? null, toArs) + spendOnCard(billAfter, papa?.id ?? null, toArs);
 
   const typicalSalary = typicalMonthlySalary(transactions, toArs, now);
   const extraFijos = projectedFijos.reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
   const cobrado = isFuture && wallet.cobrado <= 0 ? typicalSalary : wallet.cobrado;
   const gastadoContado = wallet.gastadoContado + extraFijos;
   const queda = cobrado - gastadoContado;
-  const quedaSiPagaVisa = queda - visaMia;
+  const quedaSiPagaVisa = queda - billMine;
   const estimated = isFuture && wallet.cobrado <= 0;
   const sealed = monthIsSealed(cursor, now, monthStatement?.cycle, recurring, transactions);
 
@@ -134,6 +164,13 @@ export function useMonthView(initial?: Date) {
     tarjetaAbierta,
     visaMia,
     visaPapa,
+    closingDay,
+    billBefore,
+    billAfter,
+    billMine,
+    billPapa,
+    sumsNext,
+    sumsLater,
     typicalSalary,
     quedaSiPagaVisa,
     estimated,

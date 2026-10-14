@@ -48,6 +48,16 @@ export async function readOutbox(): Promise<OutboxItem[]> {
   });
 }
 
+export async function clearOutbox() {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function removeOutbox(id: string) {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {

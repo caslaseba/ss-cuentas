@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
@@ -23,7 +23,8 @@ import { cashRecurringPaid, categoryOriginSplit, categorySlug, cursorFromMes, is
 import { cardCoversRecurring, isCardRecurring, recurringVia } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
-import { dueAfterClosing } from "@/lib/finance/settlement";
+import { spendOnCard } from "@/lib/finance/month-view";
+import { dueAfterClosing, statementRefForMonth } from "@/lib/finance/settlement";
 import { cn, formatMoney, isoDate, monthKey } from "@/lib/utils";
 import type { PaymentMethod, RecurringPayment, Transaction } from "@/lib/types";
 
@@ -68,12 +69,24 @@ function ResumenInner() {
     tarjetaAbierta,
     visaMia,
     visaPapa,
-    liveStatement,
+    closingDay,
+    billBefore,
+    billAfter,
+    billMine,
+    sumsNext,
+    sumsLater,
+    updateCard,
     quedaSiPagaVisa,
   } = view;
   const { unlocked, askPin, pinError, guard, submitPin, closePin } = useEditGate();
   const canEdit = !isPast || unlocked;
   const [hideSueldo, setHideSueldo] = useState(true);
+  const [closeDay, setCloseDay] = useState(String(closingDay));
+  const [savingClose, setSavingClose] = useState(false);
+
+  useEffect(() => {
+    setCloseDay(String(closingDay));
+  }, [closingDay]);
 
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [editingFixed, setEditingFixed] = useState<RecurringPayment | null>(null);
@@ -83,8 +96,18 @@ function ResumenInner() {
   const [unpayAsk, setUnpayAsk] = useState<RecurringPayment | null>(null);
 
   const mes = monthKey(cursor);
-  const closeDate = liveStatement?.cycle.end ?? null;
+  const closeDate = mine ? statementRefForMonth(mine, cursor) : null;
   const dueDate = mine && closeDate ? dueAfterClosing(mine, closeDate) : null;
+  const prevName = format(shiftMonth(cursor, -1), "MMMM", { locale: es });
+  const nextName = format(shiftMonth(cursor, 1), "MMMM", { locale: es });
+  const laterName = format(shiftMonth(cursor, 2), "MMMM", { locale: es });
+  const olderName = format(shiftMonth(cursor, -2), "MMMM", { locale: es });
+  const beforeTotal = billBefore.reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
+  const afterTotal = billAfter.reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
+  const nextTotal = sumsNext.reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
+  const laterTotal = sumsLater.reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
+  const beforeMine = spendOnCard(billBefore, mine?.id ?? null, toArs);
+  const beforePapa = spendOnCard(billBefore, papa?.id ?? null, toArs);
   const closeLabel = closeDate ? format(closeDate, "d/M") : null;
   const dueLabel = dueDate ? format(dueDate, "d/M") : null;
   const cats = categoryOriginSplit(cashSpend, openCardTx, categories, mine?.id ?? null, papa?.id ?? null, toArs);
@@ -157,6 +180,21 @@ function ResumenInner() {
     }
   }
 
+  async function saveClose(event: FormEvent) {
+    event.preventDefault();
+    if (!mine) return;
+    const day = Math.min(28, Math.max(1, Number(closeDay) || closingDay));
+    setSavingClose(true);
+    try {
+      await updateCard(mine.id, { closing_day: day, due_day: mine.due_day });
+      toast.success(`Cierre guardado: día ${day}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo guardar el cierre");
+    } finally {
+      setSavingClose(false);
+    }
+  }
+
   async function bringLeftover() {
     if (!leftover || alreadyCarried || !canEdit) return;
     try {
@@ -219,10 +257,49 @@ function ResumenInner() {
             {hideSueldo ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
           </Button>
         </div>
-        {isFuture && visaMia > 0 ? (
+        {billMine > 0 ? (
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Si pagás tu Visa, te quedarían {formatMoney(quedaSiPagaVisa, "ARS")}
+            Si pagás el resumen que llegó ({formatMoney(billMine, "ARS")}), te quedarían {formatMoney(quedaSiPagaVisa, "ARS")}
           </p>
+        ) : null}
+      </div>
+
+      <div className="rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-2">
+        <p className="text-[11px] font-medium text-violet-950 dark:text-violet-100">
+          En {prevName}, antes del cierre
+        </p>
+        <p className="text-sm font-semibold tabular-nums text-violet-950 dark:text-violet-50">
+          {formatMoney(beforeTotal, "ARS")}
+        </p>
+        <p className="text-[10px] leading-tight text-violet-900/80 dark:text-violet-100/80">
+          Tuya {formatMoney(beforeMine, "ARS")}
+          {papa ? ` · papá ${formatMoney(beforePapa, "ARS")}` : ""}. Eso se suma en este mes.
+        </p>
+        {afterTotal > 0 ? (
+          <p className="mt-1 text-[10px] leading-tight text-violet-900/80 dark:text-violet-100/80">
+            De {olderName}, después del cierre: {formatMoney(afterTotal, "ARS")}. También entra en este mes.
+          </p>
+        ) : null}
+        <p className="mt-1 text-[10px] leading-tight text-muted-foreground">
+          Lo que cargás ahora se ve en este mes.
+          {nextTotal > 0 ? ` ${formatMoney(nextTotal, "ARS")} de antes del día ${closingDay} se suma en ${nextName}.` : ""}
+          {laterTotal > 0 ? ` ${formatMoney(laterTotal, "ARS")} de después del cierre se suma en ${laterName}.` : ""}
+        </p>
+        {mine ? (
+          <form className="mt-2 flex items-end gap-2" onSubmit={(e) => void saveClose(e)}>
+            <label className="min-w-0 flex-1 text-[10px] text-muted-foreground">
+              Día de cierre
+              <Input
+                className="mt-1 h-8"
+                inputMode="numeric"
+                value={closeDay}
+                onChange={(e) => setCloseDay(e.target.value)}
+              />
+            </label>
+            <Button type="submit" size="sm" className="h-8 px-2 text-xs" disabled={savingClose}>
+              Guardar cierre
+            </Button>
+          </form>
         ) : null}
       </div>
 
@@ -272,12 +349,10 @@ function ResumenInner() {
           <p className="text-[11px] font-semibold leading-tight tabular-nums text-violet-950 dark:text-violet-100">
             {formatMoney(visaMia, "ARS")}
           </p>
-          {closeLabel ? (
-            <p className="truncate text-[9px] leading-tight text-muted-foreground">
-              cierra {closeLabel}
-              {dueLabel ? ` · vence ${dueLabel}` : ""}
-            </p>
-          ) : null}
+          <p className="truncate text-[9px] leading-tight text-muted-foreground">
+            este mes
+            {closeLabel ? ` · cierra ${closeLabel}` : ""}
+          </p>
         </Link>
         {papa ? (
           <Link
@@ -288,12 +363,10 @@ function ResumenInner() {
             <p className="text-[11px] font-semibold leading-tight tabular-nums text-fuchsia-950 dark:text-fuchsia-100">
               {formatMoney(visaPapa, "ARS")}
             </p>
-            {closeLabel ? (
-              <p className="truncate text-[9px] leading-tight text-muted-foreground">
-                cierra {closeLabel}
-                {dueLabel ? ` · vence ${dueLabel}` : ""}
-              </p>
-            ) : null}
+            <p className="truncate text-[9px] leading-tight text-muted-foreground">
+              este mes
+              {closeLabel ? ` · cierra ${closeLabel}` : ""}
+            </p>
           </Link>
         ) : (
           <div />
@@ -309,8 +382,8 @@ function ResumenInner() {
             {formatMoney(tarjetaAbierta, "ARS")}
           </p>
           <p className="truncate text-[9px] leading-tight text-muted-foreground">
-            {isPast ? "de ese mes" : "al mes que viene"}
-            {closeLabel ? ` · cierra ${closeLabel}` : ""}
+            se ve este mes
+            {closeLabel ? ` · cierre ${closeLabel}` : ""}
             {dueLabel ? ` · vence ${dueLabel}` : ""}
           </p>
         </Link>

@@ -101,8 +101,10 @@ function CategoriaInner({ params }: { params: Promise<{ slug: string }> }) {
 
       {grouped.tarjeta.length > 0 ? (
         <section className="space-y-2 pb-4">
-          <h2 className="text-sm font-medium">De tarjeta · va al próximo mes</h2>
-          <p className="text-xs text-muted-foreground">Tu Visa o la extensión de papá.</p>
+          <h2 className="text-sm font-medium">De tarjeta · se ve este mes</h2>
+          <p className="text-xs text-muted-foreground">
+            Tu Visa o la extensión de papá. Lo de antes del cierre se suma el mes que viene.
+          </p>
           {grouped.tarjeta.map((t) => (
             <MovementRow
               key={t.id}

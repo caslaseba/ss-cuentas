@@ -278,3 +278,24 @@ export function spendOnCard(
     .filter((t) => t.type === "egreso" && t.credit_card_id === cardId)
     .reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
 }
+
+export function chargeDay(dateStr: string) {
+  const day = Number(dateStr.slice(8, 10));
+  return Number.isFinite(day) && day > 0 ? day : 1;
+}
+
+/** El día de cierre entra en el resumen. Lo posterior queda para el cierre que sigue. */
+export function isOnOrBeforeClose(dateStr: string, closingDay: number) {
+  return chargeDay(dateStr) <= closingDay;
+}
+
+export function cardChargesInMonth(txs: Transaction[], month: Date, cardIds: Set<string>) {
+  return txs.filter(
+    (t) =>
+      t.type === "egreso" &&
+      t.payment_method === "tarjeta_credito" &&
+      Boolean(t.credit_card_id) &&
+      cardIds.has(t.credit_card_id as string) &&
+      inCurrentMonth(t.occurred_on, month),
+  );
+}

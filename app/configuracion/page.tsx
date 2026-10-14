@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { useDolarRate } from "@/hooks/use-dolar-rate";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { ZoomToggle } from "@/components/layout/zoom-toggle";
+import { ResetData } from "@/components/settings/reset-data";
 import { createClient } from "@/lib/supabase/client";
 import { formatMoney } from "@/lib/utils";
 
@@ -173,6 +174,8 @@ export default function ConfiguracionPage() {
           </form>
         </CardContent>
       </Card>
+
+      <ResetData />
 
       {isAdmin ? (
         <Card>

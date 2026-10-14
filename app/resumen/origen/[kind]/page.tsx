@@ -50,7 +50,7 @@ function OrigenInner({ params }: { params: Promise<{ kind: string }> }) {
   const hint =
     kind === "plata"
       ? "Sale de tu sueldo por transferencia."
-      : "Va al próximo mes, cuando cierre el resumen.";
+      : `Se ve en este mes. Lo de antes del día ${view.closingDay} se suma el mes que viene.`;
 
   return (
     <div className="mx-auto w-full max-w-lg space-y-4">

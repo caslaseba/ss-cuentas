@@ -115,7 +115,16 @@ export default function MasPage() {
             />
             <AmountInput value={fixedAmount} onChange={setFixedAmount} placeholder="Monto" required />
             {fixedPay === "plata" ? (
-              <Input value={fixedDay} onChange={(e) => setFixedDay(e.target.value)} placeholder="Día" />
+              <label className="block text-[11px] text-muted-foreground">
+                Día del mes
+                <Input
+                  className="mt-1"
+                  inputMode="numeric"
+                  value={fixedDay}
+                  onChange={(e) => setFixedDay(e.target.value)}
+                  placeholder="10"
+                />
+              </label>
             ) : (
               <p className="self-center text-xs text-muted-foreground">Sin vencimiento: se paga con la tarjeta</p>
             )}
