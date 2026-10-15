@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { toast, Toaster } from "sonner";
+import { AuthFrame } from "@/components/auth/auth-frame";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+const fieldClass = "mt-1.5 h-12 border-foreground/20 bg-card";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -15,10 +16,12 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
+    setError("");
     try {
       const res = await fetch("/api/auth/signup", {
         method: "POST",
@@ -27,64 +30,56 @@ export default function RegisterPage() {
       });
       const data = (await res.json()) as { error?: string; needsConfirm?: boolean; ok?: boolean };
       if (!res.ok || data.error) {
-        toast.error(data.error || `Error ${res.status}`);
+        setError(data.error || "No se pudo crear la cuenta.");
         return;
       }
       if (data.needsConfirm) {
-        toast.success(
-          "Cuenta creada. Confirmá el email o desactivá Confirm email en Supabase → Authentication → Providers → Email.",
-        );
+        setError("Cuenta creada. Confirmá el email y después entrá.");
         return;
       }
       router.replace("/dashboard");
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "No se pudo contactar al servidor local.");
+      setError(err instanceof Error ? err.message : "No se pudo contactar al servidor.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="flex min-h-dvh items-center justify-center p-4">
-      <Toaster />
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Crear cuenta</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form className="space-y-3" onSubmit={(e) => void onSubmit(e)}>
-            <div>
-              <Label>Nombre</Label>
-              <Input className="mt-1.5" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
-            </div>
-            <div>
-              <Label>Email</Label>
-              <Input className="mt-1.5" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            </div>
-            <div>
-              <Label>Contraseña</Label>
-              <Input
-                className="mt-1.5"
-                type="password"
-                minLength={6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
-            <Button className="w-full" disabled={busy} type="submit">
-              {busy ? "Creando…" : "Registrarme"}
-            </Button>
-          </form>
-          <p className="mt-4 text-center text-sm text-muted-foreground">
-            ¿Ya tenés cuenta?{" "}
-            <Link className="text-primary underline" href="/login">
-              Ingresar
-            </Link>
-          </p>
-        </CardContent>
-      </Card>
-    </div>
+    <AuthFrame title="Crear cuenta">
+      <form className="space-y-4" onSubmit={(e) => void onSubmit(e)}>
+        <div>
+          <Label>Nombre</Label>
+          <Input className={fieldClass} value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+        </div>
+        <div>
+          <Label>Email</Label>
+          <Input className={fieldClass} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        </div>
+        <div>
+          <Label>Contraseña</Label>
+          <Input
+            className={fieldClass}
+            type="password"
+            autoComplete="new-password"
+            minLength={6}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+        </div>
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        <Button className="h-12 w-full" disabled={busy} type="submit">
+          {busy ? "Creando…" : "Crear cuenta"}
+        </Button>
+        <p className="text-center text-sm text-muted-foreground">
+          ¿Ya tenés cuenta?{" "}
+          <Link className="text-foreground underline underline-offset-4" href="/login">
+            Ingresar
+          </Link>
+        </p>
+      </form>
+    </AuthFrame>
   );
 }
