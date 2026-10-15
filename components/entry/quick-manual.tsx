@@ -7,9 +7,12 @@ import { AmountInput } from "@/components/ui/amount-input";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { CategorySuggest } from "@/components/entry/category-suggest";
+import { useEdition } from "@/components/providers/edition-provider";
 import { useFinance } from "@/components/providers/finance-provider";
 import { householdCards } from "@/lib/finance/cards";
 import { matchCategory } from "@/lib/finance/match";
+import { describeCategoryChoice } from "@/lib/finance/similar-category";
 import { parseAmountInput } from "@/lib/finance/amount";
 import { withObservation } from "@/lib/finance/tx-notes";
 import { addMonths, usdToLocal } from "@/lib/finance/settlement";
@@ -18,7 +21,7 @@ import { es } from "date-fns/locale";
 import { formatMoney, isoDate } from "@/lib/utils";
 import type { CurrencyCode, PaymentMethod } from "@/lib/types";
 
-type Mode = "ingreso" | "transferencia" | "tarjeta";
+type Mode = "ingreso" | "transferencia" | "tarjeta" | "servicio";
 
 export function QuickManual() {
   const {
@@ -30,7 +33,10 @@ export function QuickManual() {
     saveInstallmentPurchase,
     saveCard,
     linkCardService,
+    saveRecurring,
+    saveCategory,
   } = useFinance();
+  const { beta } = useEdition();
   const { mine, visible } = householdCards(cards, transactions);
   const conceptRef = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<Mode>("ingreso");
@@ -38,6 +44,7 @@ export function QuickManual() {
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<CurrencyCode>("ARS");
   const [categoryId, setCategoryId] = useState("");
+  const [categoryName, setCategoryName] = useState("");
   const [cardId, setCardId] = useState(mine?.id ?? visible[0]?.id ?? "");
   const [enCuotas, setEnCuotas] = useState(false);
   const [cuotas, setCuotas] = useState("");
@@ -54,15 +61,18 @@ export function QuickManual() {
   }, [visible, mine, cardId]);
 
   useEffect(() => {
-    if (mode !== "tarjeta") {
+    if (mode !== "tarjeta" && !(beta && (mode === "ingreso" || mode === "servicio"))) {
       setCurrency("ARS");
+    }
+    if (mode !== "tarjeta") {
       setAsFixed(false);
       setEnCuotas(false);
       setCuotas("");
       setCurrentCuota("1");
     }
     setCategoryId("");
-  }, [mode]);
+    setCategoryName("");
+  }, [mode, beta]);
 
   const cuotaN = enCuotas ? Number(cuotas) : 0;
   const currentN = Math.min(Math.max(Number(currentCuota) || 1, 1), Math.max(cuotaN, 1));
@@ -71,6 +81,10 @@ export function QuickManual() {
   const usdRate = Number(profile?.usd_exchange_rate ?? 0);
   const arsFromUsd = currency === "USD" && parsedAmount ? usdToLocal(parsedAmount, usdRate, 0) : 0;
   const typeCats = categories.filter((c) => c.type === (mode === "ingreso" ? "ingreso" : "egreso"));
+
+  useEffect(() => {
+    if (!beta && mode === "servicio") setMode("ingreso");
+  }, [beta, mode]);
 
   function focusConcept() {
     const go = () => conceptRef.current?.focus();
@@ -92,9 +106,33 @@ export function QuickManual() {
     setBusy(true);
     try {
       const type = mode === "ingreso" ? "ingreso" : "egreso";
-      const cat =
+      let categoryRecord =
         categories.find((c) => c.id === categoryId) ??
         matchCategory(categories, type, concept.trim() || (type === "ingreso" ? "Ingreso" : "Gasto"));
+      if (beta && categoryName.trim()) {
+        const choice = describeCategoryChoice(categories, type, categoryName);
+        if (choice.kind === "exact" || choice.kind === "similar") {
+          categoryRecord = choice.category;
+          if (choice.kind === "similar") {
+            toast.message(`Ya existe “${choice.category.name}”. La uso en lugar de crear otra.`);
+          }
+        } else if (choice.kind === "create") {
+          categoryRecord = await saveCategory({ name: choice.name, type });
+          toast.success(`Categoría nueva: ${categoryRecord.name}`);
+        }
+      } else if (beta && mode === "servicio" && concept.trim()) {
+        const choice = describeCategoryChoice(categories, "egreso", concept);
+        if (choice.kind === "exact" || choice.kind === "similar") {
+          categoryRecord = choice.category;
+          if (choice.kind === "similar") {
+            toast.message(`Ya existe “${choice.category.name}”. La uso en lugar de crear otra.`);
+          }
+        } else if (choice.kind === "create") {
+          categoryRecord = await saveCategory({ name: choice.name, type: "egreso" });
+          toast.success(`Categoría nueva: ${categoryRecord.name}`);
+        }
+      }
+      const cat = categoryRecord;
       const label = concept.trim() || cat?.name || (type === "ingreso" ? "Ingreso" : "Gasto");
       const method: PaymentMethod = mode === "tarjeta" ? "tarjeta_credito" : "transferencia";
       let resolvedCard = cardId;
@@ -102,8 +140,27 @@ export function QuickManual() {
         const created = await saveCard({ name: "Visa ICBC", kind: "principal", closing_day: 1, due_day: 14 });
         resolvedCard = created.id;
       }
-      const txCurrency: CurrencyCode = mode === "tarjeta" ? currency : "ARS";
+      const txCurrency: CurrencyCode =
+        mode === "tarjeta" || (beta && (mode === "ingreso" || mode === "servicio")) ? currency : "ARS";
       const notes = withObservation(null, observation);
+      if (mode === "servicio") {
+        await saveRecurring({
+          name: label,
+          amount: n,
+          currency: txCurrency,
+          frequency: "mensual",
+          due_day: Math.min(28, new Date().getDate() || 1),
+          category_id: cat?.id ?? null,
+        });
+        toast.success("Servicio mensual guardado");
+        setConcept("");
+        setAmount("");
+        setCategoryId("");
+        setCategoryName("");
+        setObservation("");
+        focusConcept();
+        return;
+      }
       if (mode === "tarjeta" && cuotaN >= 2 && resolvedCard) {
         await saveInstallmentPurchase({
           concept: label,
@@ -148,6 +205,7 @@ export function QuickManual() {
       setConcept("");
       setAmount("");
       setCategoryId("");
+      setCategoryName("");
       setEnCuotas(false);
       setCuotas("");
       setCurrentCuota("1");
@@ -165,12 +223,13 @@ export function QuickManual() {
 
   return (
     <form className="space-y-3" onSubmit={(e) => void submit(e)}>
-      <div className="grid grid-cols-3 gap-1">
+      <div className={beta ? "grid grid-cols-2 gap-1 sm:grid-cols-4" : "grid grid-cols-3 gap-1"}>
         {(
           [
             ["ingreso", "Ingreso"],
-            ["transferencia", "Transferencia"],
+            ["transferencia", beta ? "Gasto" : "Transferencia"],
             ["tarjeta", "Tarjeta"],
+            ...(beta ? ([["servicio", "Servicio"]] as const) : []),
           ] as const
         ).map(([id, label]) => (
           <button
@@ -183,7 +242,9 @@ export function QuickManual() {
                   ? "bg-emerald-600 text-white"
                   : id === "transferencia"
                     ? "bg-indigo-600 text-white"
-                    : "bg-violet-700 text-white"
+                    : id === "servicio"
+                      ? "bg-amber-700 text-white"
+                      : "bg-violet-700 text-white"
                 : "bg-muted text-muted-foreground"
             }`}
           >
@@ -195,15 +256,17 @@ export function QuickManual() {
         ref={conceptRef}
         value={concept}
         onChange={(e) => setConcept(e.target.value)}
-        placeholder={mode === "ingreso" ? "Detalle en observación…" : "Milanesa, cigarrillos, asado…"}
+        placeholder={
+          mode === "servicio" ? "Netflix, luz, internet…" : mode === "ingreso" ? "Cumpleaños, sueldo…" : "Milanesa, cigarrillos, asado…"
+        }
       />
-      <div className={mode === "tarjeta" ? "grid grid-cols-[1fr_auto] gap-2" : ""}>
+      <div className={mode === "tarjeta" || (beta && (mode === "ingreso" || mode === "servicio")) ? "grid grid-cols-[1fr_auto] gap-2" : ""}>
         <AmountInput
           value={amount}
           onChange={setAmount}
           placeholder={mode === "tarjeta" && cuotaN >= 2 ? "Monto de cada cuota" : "15.000"}
         />
-        {mode === "tarjeta" ? (
+        {mode === "tarjeta" || (beta && (mode === "ingreso" || mode === "servicio")) ? (
           <Select
             className="w-[5.5rem]"
             value={currency}
@@ -219,14 +282,24 @@ export function QuickManual() {
           {formatMoney(parsedAmount, "USD")} → {formatMoney(arsFromUsd, "ARS")} (dólar tarjeta)
         </p>
       ) : null}
-      <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-        <option value="">Categoría automática</option>
-        {typeCats.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-          </option>
-        ))}
-      </Select>
+      {beta ? (
+        <CategorySuggest
+          categories={categories}
+          type={mode === "ingreso" ? "ingreso" : "egreso"}
+          value={categoryName}
+          onChange={setCategoryName}
+          placeholder={mode === "servicio" ? "Categoría, por ejemplo Netflix" : "Categoría nueva o existente"}
+        />
+      ) : (
+        <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+          <option value="">Categoría automática</option>
+          {typeCats.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+      )}
       {mode === "tarjeta" ? (
         <>
           <Select value={cardId} onChange={(e) => setCardId(e.target.value)}>

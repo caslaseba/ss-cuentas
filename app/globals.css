@@ -68,15 +68,15 @@
 
 html {
   overflow-x: clip;
-  font-size: 18px;
+  font-size: calc(18px * var(--app-zoom, 1));
 }
 
 .zoom-content {
-  font-size: calc(1rem * var(--app-zoom, 1));
+  font-size: 1rem;
 }
 
 .chrome-ui {
-  font-size: 18px;
+  font-size: 1rem;
 }
 
 body {

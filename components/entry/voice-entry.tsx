@@ -15,25 +15,34 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useEdition } from "@/components/providers/edition-provider";
 import { useFinance } from "@/components/providers/finance-provider";
 import { useSpeechToText } from "@/hooks/use-speech";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
 import { householdCards } from "@/lib/finance/cards";
 import { matchCard, matchCategory, categoryLabel } from "@/lib/finance/match";
-import { parseVoiceCommand, VOICE_EXAMPLES } from "@/lib/parsers/voice-parser";
+import { describeCategoryChoice } from "@/lib/finance/similar-category";
+import { BETA_VOICE_EXAMPLES, parseVoiceCommand, parseVoiceCommandBeta, VOICE_EXAMPLES } from "@/lib/parsers/voice-parser";
 import { withObservation } from "@/lib/finance/tx-notes";
 import { formatMoney, isoDate } from "@/lib/utils";
 import type { CurrencyCode, PaymentMethod, TransactionType } from "@/lib/types";
 
 export function VoiceEntry({ compact = false }: { compact?: boolean }) {
-  const { categories, cards, transactions, saveTransaction, saveInstallmentPurchase, saveCard } = useFinance();
+  const { categories, cards, transactions, saveTransaction, saveInstallmentPurchase, saveCard, saveRecurring, saveCategory } =
+    useFinance();
+  const { beta } = useEdition();
   const { mine, visible } = householdCards(cards, transactions);
   const speech = useSpeechToText();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState(false);
   const parsed = useMemo(
-    () => (speech.transcript ? parseVoiceCommand(speech.transcript) : null),
-    [speech.transcript],
+    () =>
+      speech.transcript
+        ? beta
+          ? parseVoiceCommandBeta(speech.transcript)
+          : parseVoiceCommand(speech.transcript)
+        : null,
+    [speech.transcript, beta],
   );
 
   const [type, setType] = useState<TransactionType>("egreso");
@@ -69,6 +78,10 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
   }, [parsed, cards, categories, transactions]);
 
   const categoryName = categories.find((c) => c.id === categoryId)?.name;
+  const spokenChoice =
+    beta && parsed?.categoryHint && !categoryName
+      ? describeCategoryChoice(categories, type, parsed.categoryHint)
+      : null;
   const cardName = visible.find((c) => c.id === cardId)?.name ?? cards.find((c) => c.id === cardId)?.name;
   const amountN = parseAmountInput(amount);
 
@@ -91,6 +104,35 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
         return;
       }
       const notes = withObservation(null, observation);
+      let resolvedCategoryId = categoryId || null;
+      if (beta && !resolvedCategoryId && (parsed?.categoryHint || concept.trim())) {
+        const choice = describeCategoryChoice(categories, type, parsed?.categoryHint || concept);
+        if (choice.kind === "exact" || choice.kind === "similar") {
+          resolvedCategoryId = choice.category.id;
+          if (choice.kind === "similar") {
+            toast.message(`Ya existe “${choice.category.name}”. La uso en lugar de crear otra.`);
+          }
+        } else if (choice.kind === "create") {
+          const created = await saveCategory({ name: choice.name, type });
+          resolvedCategoryId = created.id;
+          toast.success(`Categoría nueva: ${created.name}`);
+        }
+      }
+      if (beta && parsed?.intent === "servicio") {
+        await saveRecurring({
+          name: concept.trim(),
+          amount: n,
+          currency,
+          frequency: "mensual",
+          due_day: Math.min(28, new Date().getDate() || 1),
+          category_id: resolvedCategoryId,
+        });
+        toast.success("Servicio mensual guardado");
+        setOpen(false);
+        setObservation("");
+        speech.setTranscript("");
+        return;
+      }
       let resolvedCardId = cardId || mine?.id || "";
       if (method === "tarjeta_credito" && !resolvedCardId) {
         const created = await saveCard({
@@ -109,7 +151,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
           count: cuotaN,
           currency,
           credit_card_id: resolvedCardId,
-          category_id: categoryId || null,
+          category_id: resolvedCategoryId,
           occurred_on: date,
           source: "voz",
           notes,
@@ -121,7 +163,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
           currency,
           concept,
           payment_method: method,
-          category_id: categoryId || null,
+          category_id: resolvedCategoryId,
           credit_card_id: method === "tarjeta_credito" ? resolvedCardId || null : null,
           occurred_on: date,
           source: "voz",
@@ -180,20 +222,45 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
           {speech.error && <p className="mb-3 text-sm text-destructive">{speech.error}</p>}
 
           <p className="mb-3 min-h-10 rounded-xl bg-muted p-3 text-sm">
-            {speech.transcript || "Probá: “Cobré 2 millones” o “Compré milanesa por 15 mil”."}
+            {speech.transcript ||
+              (beta
+                ? "Probá: “Gasté 2 mil pesos en cigarrillos”."
+                : "Probá: “Cobré 2 millones” o “Compré milanesa por 15 mil”.")}
           </p>
 
           {!edit && parsed ? (
             <div className="mb-4 space-y-1 rounded-2xl border border-border p-4">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                {type === "ingreso" ? "Cobro" : method === "tarjeta_credito" ? "Gasto con tarjeta" : "Gasto"}
+                {parsed?.intent === "servicio"
+                  ? "Servicio mensual"
+                  : type === "ingreso"
+                    ? "Ingreso"
+                    : method === "tarjeta_credito"
+                      ? "Gasto con tarjeta"
+                      : "Egreso"}
               </p>
               <p className="text-3xl font-semibold">{amountN ? formatMoney(amountN, currency) : "—"}</p>
               <p className="text-sm font-medium">{concept || "Sin concepto"}</p>
               <p className="text-xs text-muted-foreground">
-                {categoryName ? categoryLabel(categoryName) : "Sin categoría"}
-                {method === "tarjeta_credito" ? ` · ${cardName ?? "Tarjeta"}` : " · sale de tu plata"}
+                {categoryName
+                  ? categoryLabel(categoryName)
+                  : beta && parsed?.categoryHint
+                    ? parsed.categoryHint
+                    : "Sin categoría"}
+                {parsed?.intent === "servicio"
+                  ? " · todos los meses"
+                  : method === "tarjeta_credito"
+                    ? ` · ${cardName ?? "Tarjeta"}`
+                    : " · sale de tu plata"}
               </p>
+              {spokenChoice?.kind === "similar" ? (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  Ya existe “{spokenChoice.category.name}”. Al guardar uso esa.
+                </p>
+              ) : null}
+              {spokenChoice?.kind === "create" ? (
+                <p className="text-xs text-muted-foreground">Si no existe, se crea “{spokenChoice.name}”.</p>
+              ) : null}
             </div>
           ) : null}
 
@@ -282,7 +349,9 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
             </Button>
           </div>
 
-          <p className="mt-3 text-[11px] text-muted-foreground">Ej: {VOICE_EXAMPLES[1]}</p>
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            Ej: {(beta ? BETA_VOICE_EXAMPLES : VOICE_EXAMPLES)[0]}
+          </p>
         </DialogContent>
       </Dialog>
     </>

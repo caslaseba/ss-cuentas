@@ -89,7 +89,7 @@ type FinanceContextValue = {
   }) => Promise<void>;
   unlinkCardService: (name: string) => Promise<void>;
   updateProfile: (patch: Partial<Profile>) => Promise<void>;
-  saveCategory: (input: { name: string; type: Category["type"] }) => Promise<void>;
+  saveCategory: (input: { name: string; type: Category["type"] }) => Promise<Category>;
   updateCategory: (id: string, patch: { name: string }) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
   updateCategoryLimit: (id: string, monthly_limit: number | null) => Promise<void>;
@@ -848,13 +848,17 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     if (!user) throw new Error("Sin sesión");
     const name = input.name.trim();
     if (!name) throw new Error("Poné un nombre de categoría");
-    const { error } = await supabase.from("categories").insert({
-      user_id: user.id,
-      name,
-      type: input.type,
-      icon: "tag",
-      is_default: false,
-    });
+    const { data, error } = await supabase
+      .from("categories")
+      .insert({
+        user_id: user.id,
+        name,
+        type: input.type,
+        icon: "tag",
+        is_default: false,
+      })
+      .select("*")
+      .single();
     if (error) {
       if (error.message.toLowerCase().includes("duplicate") || error.code === "23505") {
         throw new Error("Esa categoría ya existe");
@@ -862,6 +866,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       throw error;
     }
     await refresh();
+    return data as Category;
   };
 
   const updateCategory: FinanceContextValue["updateCategory"] = async (id, patch) => {

@@ -5,9 +5,16 @@ import type {
   VoiceParseResult,
 } from "@/lib/types";
 import { guessCategoryName } from "@/lib/finance/match";
+import { titleCaseEs } from "@/lib/finance/similar-category";
 
 const INCOME_HINTS =
   /\b(cobr[eé]|ingres[eé]|sueldo|dep[oó]sito|me depositaron|me pagaron|recib[ií]|gan[eé])\b/i;
+
+const BETA_INCOME_HINTS =
+  /\b(me dieron|me dio|me regalaron|me regalo|me entraron|cobr[eé]|ingres[eé]|recib[ií]|gan[eé])\b/i;
+
+const RECURRING_HINTS =
+  /\b(mensualmente|todos los meses|cada mes|se va a pagar|servicio fijo)\b/i;
 
 const EXPENSE_HINTS =
   /\b(compr[eé]|gast[eé]|pagu[eé]|saqu[eé]|invert[ií]|abon[eé])\b/i;
@@ -217,3 +224,58 @@ export const VOICE_EXAMPLES = [
   "Compré cigarrillos por 3000 pesos",
   "Compré 2 kgs de asado por 20 mil pesos con la Visa",
 ];
+
+export const BETA_VOICE_EXAMPLES = [
+  "Gasté 2 mil pesos en cigarrillos",
+  "Me dieron 100 dólares por mi cumpleaños",
+  "Se va a pagar mensualmente 24 mil pesos por Netflix",
+];
+
+function extractCategoryPhrase(raw: string) {
+  let cleaned = raw.toLowerCase().replace(/,/g, " ").replace(/\s+/g, " ").trim();
+  cleaned = cleaned.replace(/\b\d+(?:[.,]\d+)?\s*millones?\b/g, " ");
+  cleaned = cleaned.replace(
+    /\b(?:un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte|veinticuatro|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien)\s+mil\b/g,
+    " ",
+  );
+  cleaned = cleaned.replace(/\b\d+(?:[.,]\d+)?\s*mil(?:\s+\d{1,3})?\b/g, " ");
+  cleaned = cleaned.replace(/\b\d+(?:[.,]\d+)?\s*(?:pesos?|d[oó]lares?|usd|ars)\b/g, " ");
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+
+  const word = String.raw`[\p{L}][\p{L} ]{1,40}`;
+  const en = cleaned.match(new RegExp(String.raw`\ben\s+(${word})$`, "u"));
+  const por = cleaned.match(new RegExp(String.raw`\bpor\s+(?:mi |el |la |los |las |un |una )?(${word})$`, "u"));
+  const phrase = (en?.[1] ?? por?.[1] ?? "").trim();
+  if (!phrase || /^(peso|pesos|dolar|dólar|dolares|dólares|mil|mensual|mensualmente)$/.test(phrase)) return null;
+  return phrase;
+}
+
+export function parseVoiceCommandBeta(transcript: string): VoiceParseResult {
+  const base = parseVoiceCommand(transcript);
+  const text = normalize(transcript);
+  const recurring = RECURRING_HINTS.test(text);
+  const income = BETA_INCOME_HINTS.test(text) && !EXPENSE_HINTS.test(text);
+  const phrase = extractCategoryPhrase(transcript);
+  const categoryName = phrase ? titleCaseEs(phrase) : null;
+  let amount = base.amount;
+  if (amount == null && USD_HINTS.test(text)) {
+    const first = text.match(/\b(\d+(?:\.\d+)?)\b/);
+    if (first) amount = Number(first[1]);
+  }
+
+  const resolvedType: TransactionType = recurring ? "egreso" : income ? "ingreso" : base.type;
+
+  return {
+    ...base,
+    type: resolvedType,
+    amount,
+    currency: USD_HINTS.test(text) ? "USD" : base.currency,
+    concept: categoryName || base.concept,
+    categoryHint: categoryName || base.categoryHint,
+    paymentMethod: recurring ? "transferencia" : base.paymentMethod,
+    installmentCount: recurring ? null : base.installmentCount,
+    installmentAmount: recurring ? null : base.installmentAmount,
+    intent: recurring ? "servicio" : "movimiento",
+    confidence: amount && (categoryName || base.concept) ? "alta" : base.confidence,
+  };
+}

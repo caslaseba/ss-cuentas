@@ -10,7 +10,10 @@ import { ZoomToggle } from "@/components/layout/zoom-toggle";
 import { FinanceProvider, useFinance } from "@/components/providers/finance-provider";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
+import { EditionToggle } from "@/components/layout/edition-toggle";
+import { useEdition } from "@/components/providers/edition-provider";
 import { CalculatorWidget } from "@/components/tools/calculator";
+import { NotesWidget } from "@/components/tools/notes-widget";
 import { SearchWidget } from "@/components/tools/search-widget";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +41,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { online, loading, pendingSync } = useFinance();
+  const { beta } = useEdition();
 
   async function logout() {
     const supabase = createClient();
@@ -47,29 +51,35 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="app-zoom min-h-dvh bg-background">
-      <header className="chrome-ui safe-header fixed inset-x-0 top-0 z-30 flex items-center justify-between gap-2 border-b border-border bg-background/95 px-3 py-3 backdrop-blur sm:px-4">
-        <div className="min-w-0">
-          <p className="truncate font-semibold" suppressHydrationWarning>
-            SS Cuentas
-          </p>
-          <p className="text-[11px] text-muted-foreground" suppressHydrationWarning>
-            {online ? "En línea" : "Sin señal · se actualiza al volver"}
-            {pendingSync > 0 ? ` · ${pendingSync} pendiente${pendingSync === 1 ? "" : "s"}` : ""}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-nowrap items-center gap-0.5 sm:gap-1">
-          <SearchWidget />
-          <CalculatorWidget />
-          <ZoomToggle compact />
-          <ThemeToggle compact />
-          <Button size="sm" variant="ghost" onClick={() => void logout()} aria-label="Salir">
-            <LogOut className="h-4 w-4" />
-            <span className="hidden sm:inline">Salir</span>
-          </Button>
+      <header className="chrome-ui safe-header sticky top-0 z-30 border-b border-border bg-background/95 px-3 py-3 backdrop-blur sm:px-4">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="truncate font-semibold" suppressHydrationWarning>
+                SS Cuentas
+              </p>
+              <EditionToggle />
+            </div>
+            <p className="text-[11px] text-muted-foreground" suppressHydrationWarning>
+              {online ? "En línea" : "Sin señal · se actualiza al volver"}
+              {pendingSync > 0 ? ` · ${pendingSync} pendiente${pendingSync === 1 ? "" : "s"}` : ""}
+            </p>
+          </div>
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-0.5 sm:gap-1">
+            <SearchWidget />
+            <CalculatorWidget />
+            {beta ? <NotesWidget /> : null}
+            <ZoomToggle compact />
+            <ThemeToggle compact />
+            <Button size="sm" variant="ghost" onClick={() => void logout()} aria-label="Salir">
+              <LogOut className="h-4 w-4" />
+              <span className="hidden sm:inline">Salir</span>
+            </Button>
+          </div>
         </div>
       </header>
 
-      <main className="zoom-content pt-[calc(4.25rem+env(safe-area-inset-top))] pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
+      <main className="zoom-content pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
         <div className="mx-auto w-full min-w-0 max-w-lg px-3 py-4 sm:px-4 sm:py-6 md:max-w-2xl xl:max-w-5xl">
           {!online && (
             <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">

@@ -123,4 +123,6 @@ export type VoiceParseResult = {
   paymentMethod: PaymentMethod;
   raw: string;
   confidence: "alta" | "media" | "baja";
+  /** Beta: un servicio que se repite todos los meses. */
+  intent?: "movimiento" | "servicio";
 };
