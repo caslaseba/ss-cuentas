@@ -5,6 +5,13 @@ import { bindAuthResponse, friendlyAuthError } from "@/lib/supabase/route-sessio
 
 export const runtime = "nodejs";
 
+function safeNext(value: string | null | undefined) {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
+    return "/dashboard";
+  }
+  return value;
+}
+
 export async function POST(request: NextRequest) {
   let auth: ReturnType<typeof bindAuthResponse>;
   try {
@@ -16,38 +23,55 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const contentType = request.headers.get("content-type") || "";
+  const formPost =
+    contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data");
+
+  function fail(message: string, status: number) {
+    if (formPost) return auth.redirect("/login", { error: message });
+    return auth.json({ error: message }, status);
+  }
+
   try {
-    const body = (await request.json()) as { email?: string; password?: string };
-    const email = body.email?.trim() ?? "";
-    const password = body.password ?? "";
+    let email = "";
+    let password = "";
+    let next = "/dashboard";
+    if (formPost) {
+      const form = await request.formData();
+      email = String(form.get("email") || "").trim();
+      password = String(form.get("password") || "");
+      next = safeNext(String(form.get("next") || ""));
+    } else {
+      const body = (await request.json()) as { email?: string; password?: string };
+      email = body.email?.trim() ?? "";
+      password = body.password ?? "";
+    }
 
     if (!email || !password) {
-      return auth.json({ error: "Completá email y contraseña." }, 400);
+      return fail("Completá email y contraseña.", 400);
     }
 
     const { status, json } = await signinWithPassword({ email, password });
 
     if (status >= 400) {
-      return auth.json({ error: friendlyAuthError(errorMessage(json, "No se pudo ingresar.")) }, status);
+      return fail(friendlyAuthError(errorMessage(json, "No se pudo ingresar.")), status);
     }
 
     const access_token = json.access_token;
     const refresh_token = json.refresh_token;
     if (typeof access_token !== "string" || typeof refresh_token !== "string") {
-      return auth.json(
-        { error: "Supabase no devolvió sesión. Si Confirm email está activo, confirmá el correo." },
-        401,
-      );
+      return fail("Supabase no devolvió sesión. Si Confirm email está activo, confirmá el correo.", 401);
     }
 
     const { error } = await auth.supabase.auth.setSession({ access_token, refresh_token });
     if (error) {
-      return auth.json({ error: friendlyAuthError(error.message) }, 401);
+      return fail(friendlyAuthError(error.message), 401);
     }
 
+    if (formPost) return auth.redirect(next);
     return auth.json({ ok: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error de red hacia Supabase.";
-    return auth.json({ error: friendlyAuthError(`Error de red hacia Supabase: ${message}`) }, 500);
+    return fail(friendlyAuthError(`Error de red hacia Supabase: ${message}`), 500);
   }
 }

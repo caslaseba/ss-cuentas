@@ -41,13 +41,27 @@ export function bindAuthResponse(request: NextRequest) {
     },
   });
 
-  function json(body: unknown, status = 200) {
-    const response = NextResponse.json(body, { status });
+  function withCookies(response: NextResponse) {
     for (const cookie of jar) {
       response.cookies.set(cookie.name, cookie.value, cookie.options);
     }
     return response;
   }
 
-  return { supabase, json };
+  function json(body: unknown, status = 200) {
+    return withCookies(NextResponse.json(body, { status }));
+  }
+
+  function redirect(pathname: string, search?: Record<string, string>) {
+    const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || request.nextUrl.host;
+    const proto = request.headers.get("x-forwarded-proto") || request.nextUrl.protocol.replace(":", "") || "http";
+    const url = new URL(pathname, `${proto}://${host}`);
+    url.search = "";
+    for (const [key, value] of Object.entries(search ?? {})) {
+      if (value) url.searchParams.set(key, value);
+    }
+    return withCookies(NextResponse.redirect(url, 303));
+  }
+
+  return { supabase, json, redirect };
 }

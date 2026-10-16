@@ -3,7 +3,16 @@ import { NextResponse, type NextRequest } from "next/server";
 import { normalizeSupabaseUrl } from "@/lib/supabase/env";
 import { withTimeout } from "@/lib/async";
 
-const PUBLIC_PATHS = ["/", "/login", "/register", "/offline", "/recuperar", "/manifest.webmanifest"];
+const PUBLIC_PATHS = [
+  "/",
+  "/login",
+  "/register",
+  "/offline",
+  "/recuperar",
+  "/manifest.webmanifest",
+  "/icon",
+  "/apple-icon",
+];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
