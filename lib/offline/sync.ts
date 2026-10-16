@@ -19,6 +19,7 @@ function openDb(): Promise<IDBDatabase> {
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error("indexedDB blocked"));
   });
 }
 

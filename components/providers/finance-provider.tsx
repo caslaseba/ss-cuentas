@@ -22,6 +22,7 @@ import type {
 
 type FinanceContextValue = {
   loading: boolean;
+  loadError: string | null;
   online: boolean;
   pendingSync: number;
   profile: Profile | null;
@@ -95,11 +96,30 @@ type FinanceContextValue = {
   updateCategoryLimit: (id: string, monthly_limit: number | null) => Promise<void>;
 };
 
+type BootstrapBody = {
+  userId: string;
+  profile: Profile | null;
+  categories: Category[];
+  accounts: Account[];
+  cards: CreditCard[];
+  transactions: Transaction[];
+  installments: Installment[];
+  recurring: RecurringPayment[];
+  error?: string;
+};
+
+function loadFailureMessage(err: unknown) {
+  const text = err instanceof Error ? err.message : "No se pudieron cargar los datos.";
+  if (text === "timeout") return "La carga tardó demasiado. Tocá reintentar.";
+  return text;
+}
+
 const FinanceContext = createContext<FinanceContextValue | null>(null);
 
 export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const supabase = useMemo(() => createClient(), []);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [online, setOnline] = useState(true);
   const [pendingSync, setPendingSync] = useState(0);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -110,202 +130,200 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [recurring, setRecurring] = useState<RecurringPayment[]>([]);
 
-  const loadCached = useCallback(async (userId?: string) => {
-    const pending = await readOutbox().catch(() => []);
-    setPendingSync(pending.length);
-    const cached = readFinanceSnapshot(userId);
-    if (!cached) return null;
-    const merged = applyOutboxToSnapshot(cached, pending);
-    setProfile(merged.profile);
-    setCategories(merged.categories);
-    setAccounts(merged.accounts);
-    setCards(merged.cards);
-    setTransactions(merged.transactions);
-    setInstallments(merged.installments);
-    setRecurring(merged.recurring);
-    setLoading(false);
-    return merged;
-  }, []);
-
   const currentUser = useCallback(async () => {
-    const { data: sessionData } = await supabase.auth.getSession();
-    if (sessionData.session?.user) return sessionData.session.user;
+    try {
+      const { data: sessionData } = await withTimeout(supabase.auth.getSession(), 5000);
+      if (sessionData.session?.user) return sessionData.session.user;
+    } catch {
+      /* la sesión del navegador no respondió */
+    }
     if (typeof navigator !== "undefined" && !navigator.onLine) return null;
     try {
-      const { data } = await withTimeout(supabase.auth.getUser(), 8000);
+      const { data } = await withTimeout(supabase.auth.getUser(), 5000);
       return data.user;
     } catch {
       return null;
     }
   }, [supabase]);
 
-  const refresh = useCallback(async () => {
-    try {
-      const user = await currentUser();
-      const cached = await loadCached(user?.id);
-
-      if (!user) {
-        if (!cached) setLoading(false);
-        return;
-      }
-
-      if (typeof navigator !== "undefined" && !navigator.onLine) return;
-
-      const [p, c, a, cc, t, i, r] = await withTimeout(
-        Promise.all([
-        supabase.from("profiles").select("*").eq("id", user.id).single(),
-        supabase.from("categories").select("*").eq("user_id", user.id).order("name"),
-        supabase.from("accounts").select("*").eq("user_id", user.id).order("name"),
-        supabase.from("credit_cards").select("*").eq("user_id", user.id).order("name"),
-        supabase
-          .from("transactions")
-          .select("*")
-          .eq("user_id", user.id)
-          .order("occurred_on", { ascending: false })
-          .limit(800),
-        supabase.from("installments").select("*").eq("user_id", user.id).order("start_date", { ascending: false }),
-        supabase.from("recurring_payments").select("*").eq("user_id", user.id).order("due_day"),
-      ]),
-        15000,
-      );
-
-      if (p.data) setProfile(p.data as Profile);
-      let cats = (c.data ?? []) as Category[];
+  const primeHousehold = useCallback(
+    async (body: BootstrapBody) => {
+      let cats = body.categories;
       if (!cats.some((x) => x.name === "Transferencia" && x.type === "ingreso")) {
-        const { data: createdTransfer } = await supabase
-          .from("categories")
-          .insert({
-            user_id: user.id,
-            name: "Transferencia",
-            type: "ingreso",
-            icon: "arrow-left-right",
-            is_default: true,
-          })
-          .select("*")
-          .single();
+        const { data: createdTransfer } = await withTimeout(
+          supabase
+            .from("categories")
+            .insert({
+              user_id: body.userId,
+              name: "Transferencia",
+              type: "ingreso",
+              icon: "arrow-left-right",
+              is_default: true,
+            })
+            .select("*")
+            .single(),
+          6000,
+        );
         if (createdTransfer) cats = [...cats, createdTransfer as Category];
       }
       if (!cats.some((x) => x.name === "Cigarrillos" && x.type === "egreso")) {
-        const { data: created } = await supabase
-          .from("categories")
-          .insert({
-            user_id: user.id,
-            name: "Cigarrillos",
-            type: "egreso",
-            icon: "cigarette",
-            is_default: true,
-          })
-          .select("*")
-          .single();
+        const { data: created } = await withTimeout(
+          supabase
+            .from("categories")
+            .insert({
+              user_id: body.userId,
+              name: "Cigarrillos",
+              type: "egreso",
+              icon: "cigarette",
+              is_default: true,
+            })
+            .select("*")
+            .single(),
+          6000,
+        );
         if (created) cats = [...cats, created as Category];
       }
-      setCategories(cats);
-      let loadedAccounts = (a.data ?? []) as Account[];
+      if (cats !== body.categories) setCategories(cats);
+
+      let loadedAccounts = body.accounts;
       if (!findMpAccount(loadedAccounts)) {
-        const { data: createdMp } = await supabase
-          .from("accounts")
-          .insert({
-            user_id: user.id,
-            name: MP_ACCOUNT_NAME,
-            kind: "billetera",
-            currency: "ARS",
-            balance: 0,
-            is_savings_box: false,
-          })
-          .select("*")
-          .single();
+        const { data: createdMp } = await withTimeout(
+          supabase
+            .from("accounts")
+            .insert({
+              user_id: body.userId,
+              name: MP_ACCOUNT_NAME,
+              kind: "billetera",
+              currency: "ARS",
+              balance: 0,
+              is_savings_box: false,
+            })
+            .select("*")
+            .single(),
+          6000,
+        );
         if (createdMp) loadedAccounts = [...loadedAccounts, createdMp as Account];
       }
       if (!findIcbcAccount(loadedAccounts)) {
-        const { data: createdBank } = await supabase
-          .from("accounts")
-          .insert({
-            user_id: user.id,
-            name: ICBC_ACCOUNT_NAME,
-            kind: "caja_ahorro",
-            currency: "ARS",
-            balance: 0,
-            is_savings_box: false,
-          })
-          .select("*")
-          .single();
+        const { data: createdBank } = await withTimeout(
+          supabase
+            .from("accounts")
+            .insert({
+              user_id: body.userId,
+              name: ICBC_ACCOUNT_NAME,
+              kind: "caja_ahorro",
+              currency: "ARS",
+              balance: 0,
+              is_savings_box: false,
+            })
+            .select("*")
+            .single(),
+          6000,
+        );
         if (createdBank) loadedAccounts = [...loadedAccounts, createdBank as Account];
       }
-      setAccounts(loadedAccounts);
-      if (cc.data) setCards(cc.data as CreditCard[]);
-      if (t.data) setTransactions(t.data as Transaction[]);
-      if (i.data) setInstallments(i.data as Installment[]);
-      if (r.data) setRecurring(r.data as RecurringPayment[]);
-      writeFinanceSnapshot({
-        userId: user.id,
-        profile: (p.data as Profile | null) ?? cached?.profile ?? null,
-        categories: cats,
-        accounts: loadedAccounts.length ? loadedAccounts : cached?.accounts ?? [],
-        cards: (cc.data as CreditCard[]) ?? cached?.cards ?? [],
-        transactions: (t.data as Transaction[]) ?? cached?.transactions ?? [],
-        installments: (i.data as Installment[]) ?? cached?.installments ?? [],
-        recurring: (r.data as RecurringPayment[]) ?? cached?.recurring ?? [],
-      });
-      const pending = await readOutbox().catch(() => []);
-      if (pending.length) {
-        const merged = applyOutboxToSnapshot(
-          {
-            userId: user.id,
-            profile: (p.data as Profile | null) ?? cached?.profile ?? null,
-            categories: cats,
-            accounts: loadedAccounts.length ? loadedAccounts : cached?.accounts ?? [],
-            cards: (cc.data as CreditCard[]) ?? cached?.cards ?? [],
-            transactions: (t.data as Transaction[]) ?? cached?.transactions ?? [],
-            installments: (i.data as Installment[]) ?? cached?.installments ?? [],
-            recurring: (r.data as RecurringPayment[]) ?? cached?.recurring ?? [],
-          },
-          pending,
-        );
-        setAccounts(merged.accounts);
-        setTransactions(merged.transactions);
-        setPendingSync(pending.length);
-      } else {
-        setPendingSync(0);
-      }
+      if (loadedAccounts !== body.accounts) setAccounts(loadedAccounts);
 
-      const loadedCards = (cc.data ?? []) as CreditCard[];
-      const loadedTx = (t.data ?? []) as Transaction[];
-      const { mine, papa } = householdCards(loadedCards, loadedTx);
+      const { mine, papa } = householdCards(body.cards, body.transactions);
       if (mine && mine.name !== MY_CARD_NAME) {
-        await supabase.from("credit_cards").update({ name: MY_CARD_NAME }).eq("id", mine.id);
+        await withTimeout(supabase.from("credit_cards").update({ name: MY_CARD_NAME }).eq("id", mine.id), 6000);
         setCards((prev) => prev.map((c) => (c.id === mine.id ? { ...c, name: MY_CARD_NAME } : c)));
       }
       if (papa && papa.name !== DAD_CARD_NAME) {
-        await supabase.from("credit_cards").update({ name: DAD_CARD_NAME }).eq("id", papa.id);
+        await withTimeout(supabase.from("credit_cards").update({ name: DAD_CARD_NAME }).eq("id", papa.id), 6000);
         setCards((prev) => prev.map((c) => (c.id === papa.id ? { ...c, name: DAD_CARD_NAME } : c)));
       }
-      if (mine && !papa && !loadedCards.some((c) => isPapaCard(c))) {
-        const { data: createdPapa } = await supabase
-          .from("credit_cards")
-          .insert({
-            user_id: user.id,
-            name: DAD_CARD_NAME,
-            kind: "extension",
-            parent_card_id: mine.id,
-            closing_day: mine.closing_day,
-            due_day: mine.due_day,
-            credit_limit: 0,
-            available_limit: 0,
-            usd_tax_pct: 0,
-          })
-          .select("*")
-          .single();
+      if (mine && !papa && !body.cards.some((c) => isPapaCard(c))) {
+        const { data: createdPapa } = await withTimeout(
+          supabase
+            .from("credit_cards")
+            .insert({
+              user_id: body.userId,
+              name: DAD_CARD_NAME,
+              kind: "extension",
+              parent_card_id: mine.id,
+              closing_day: mine.closing_day,
+              due_day: mine.due_day,
+              credit_limit: 0,
+              available_limit: 0,
+              usd_tax_pct: 0,
+            })
+            .select("*")
+            .single(),
+          6000,
+        );
         if (createdPapa) setCards((prev) => [...prev, createdPapa as CreditCard]);
       }
+    },
+    [supabase],
+  );
+
+  const refresh = useCallback(async () => {
+    try {
+      const cachedNow = readFinanceSnapshot();
+      if (cachedNow) {
+        setProfile(cachedNow.profile);
+        setCategories(cachedNow.categories);
+        setAccounts(cachedNow.accounts);
+        setCards(cachedNow.cards);
+        setTransactions(cachedNow.transactions);
+        setInstallments(cachedNow.installments);
+        setRecurring(cachedNow.recurring);
+        setLoading(false);
+      }
+
+      const res = await withTimeout(fetch("/api/finance/bootstrap", { cache: "no-store" }), 12000);
+      const body = (await res.json().catch(() => null)) as BootstrapBody | null;
+      if (!res.ok || !body || body.error || !body.userId) {
+        if (res.status === 401) {
+          setLoadError("La sesión venció. Volvé a entrar.");
+          return;
+        }
+        throw new Error(body?.error || "No se pudieron cargar los datos.");
+      }
+
+      let pending: Awaited<ReturnType<typeof readOutbox>> = [];
+      try {
+        pending = await withTimeout(readOutbox(), 2500);
+      } catch {
+        pending = [];
+      }
+      const merged = applyOutboxToSnapshot(
+        {
+          userId: body.userId,
+          profile: body.profile,
+          categories: body.categories,
+          accounts: body.accounts,
+          cards: body.cards,
+          transactions: body.transactions,
+          installments: body.installments,
+          recurring: body.recurring,
+        },
+        pending,
+      );
+      setProfile(merged.profile);
+      setCategories(merged.categories);
+      setAccounts(merged.accounts);
+      setCards(merged.cards);
+      setTransactions(merged.transactions);
+      setInstallments(merged.installments);
+      setRecurring(merged.recurring);
+      setPendingSync(pending.length);
+      writeFinanceSnapshot(merged);
+      setLoadError(null);
+      setLoading(false);
+      void primeHousehold(body).catch(() => undefined);
     } catch (err) {
       const cached = readFinanceSnapshot();
+      const message = loadFailureMessage(err);
       if (!cached) {
-        toast.error(err instanceof Error ? err.message : "No se pudieron cargar los datos.");
+        setLoadError(message);
+        toast.error(message);
       }
     } finally {
       setLoading(false);
     }
-  }, [currentUser, loadCached, supabase]);
+  }, [primeHousehold]);
 
   const flushOutbox = useCallback(async () => {
     const items = await readOutbox();
@@ -332,6 +350,11 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       await refresh();
     }
   }, [refresh, supabase]);
+
+  useEffect(() => {
+    const watchdog = window.setTimeout(() => setLoading(false), 8000);
+    return () => window.clearTimeout(watchdog);
+  }, []);
 
   useEffect(() => {
     setOnline(navigator.onLine);
@@ -896,6 +919,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     <FinanceContext.Provider
       value={{
         loading,
+        loadError,
         online,
         pendingSync,
         profile,

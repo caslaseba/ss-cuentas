@@ -40,7 +40,7 @@ function ThemedToaster() {
 function ShellInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { online, loading, pendingSync } = useFinance();
+  const { online, loading, loadError, pendingSync, refresh } = useFinance();
   const { beta } = useEdition();
 
   async function logout() {
@@ -92,6 +92,14 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               aparato, subiendo ahora.
             </div>
           )}
+          {loadError && !loading ? (
+            <div className="mb-4 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-3 text-sm">
+              <p>{loadError}</p>
+              <Button className="mt-3" size="sm" variant="outline" onClick={() => void refresh()}>
+                Reintentar
+              </Button>
+            </div>
+          ) : null}
           {loading ? (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">

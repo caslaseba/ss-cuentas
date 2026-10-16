@@ -65,6 +65,9 @@ export async function updateSession(request: NextRequest) {
     path.endsWith(".webmanifest");
 
   if (!user && !isPublic) {
+    if (path.startsWith("/api/")) {
+      return NextResponse.json({ error: "La sesión venció. Volvé a entrar." }, { status: 401 });
+    }
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/login";
     redirect.searchParams.set("next", path);
