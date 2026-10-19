@@ -22,47 +22,14 @@ call :require node "Node.js" "OpenJS.NodeJS.LTS" || exit /b 1
 call :require git "Git" "Git.Git" || exit /b 1
 call :require gh "GitHub CLI" "GitHub.cli" || exit /b 1
 
-if not exist "%DEST%\package.json" (
-  echo  Bajando el proyecto a:
-  echo  %DEST%
-  echo.
-  gh auth status >nul 2>&1
-  if errorlevel 1 (
-    echo  Inicia sesion en GitHub con la cuenta caslaseba.
-    gh auth login -h github.com -p https -w
-    if errorlevel 1 (
-      echo  No se pudo entrar a GitHub.
-      pause
-      exit /b 1
-    )
-  )
-  gh repo clone %REPO% "%DEST%"
-  if errorlevel 1 (
-    echo  No se pudo clonar el repositorio.
-    pause
-    exit /b 1
-  )
-)
+call :sync
+if errorlevel 1 exit /b 1
 
 cd /d "%DEST%"
 if errorlevel 1 (
   echo  No encuentro la carpeta %DEST%
   pause
   exit /b 1
-)
-
-if exist "%DEST%\.git" (
-  echo  Actualizando el codigo desde GitHub...
-  git pull --ff-only origin master
-  if errorlevel 1 (
-    echo  No pude actualizar. Si editaste archivos en esta carpeta, guardalos y volve a abrir.
-    pause
-    exit /b 1
-  )
-) else (
-  echo  Esta carpeta no es el repo de GitHub. El codigo puede quedar viejo.
-  echo  Borra %DEST% y volve a abrir este archivo para bajarlo de nuevo.
-  echo.
 )
 
 echo  Instalando dependencias...
@@ -156,6 +123,57 @@ if not errorlevel 1 (
 start "" "http://localhost:%PORT%"
 start "" notepad "%DEST%\COMO-ENTRAR.txt"
 call npm run dev
+exit /b 0
+
+:sync
+echo  Actualizando a la ultima version...
+if exist "%DEST%\.env.local" copy /Y "%DEST%\.env.local" "%TEMP%\ss-cuentas-env.local" >nul
+if exist "%DEST%\.git" (
+  git -C "%DEST%" remote set-url origin https://github.com/%REPO%.git
+  git -C "%DEST%" fetch origin master
+  if errorlevel 1 (
+    echo  No pude bajar la ultima version desde GitHub.
+    pause
+    exit /b 1
+  )
+  git -C "%DEST%" reset --hard origin/master
+  git -C "%DEST%" checkout -B master
+  if errorlevel 1 (
+    echo  No pude dejar la carpeta en la ultima version.
+    pause
+    exit /b 1
+  )
+) else (
+  echo  La carpeta estaba vieja. La bajo de nuevo.
+  cd /d "%USERPROFILE%"
+  if exist "%DEST%" (
+    if exist "%DEST%-viejo" rmdir /S /Q "%DEST%-viejo"
+    ren "%DEST%" "ss-cuentas-viejo"
+    if errorlevel 1 (
+      echo  No pude reemplazar %DEST%
+      echo  Cerra Cursor si tiene abierta esa carpeta y volve a abrir este archivo.
+      pause
+      exit /b 1
+    )
+  )
+  gh auth status >nul 2>&1
+  if errorlevel 1 (
+    echo  Inicia sesion en GitHub con la cuenta caslaseba.
+    gh auth login -h github.com -p https -w
+    if errorlevel 1 (
+      echo  No se pudo entrar a GitHub.
+      pause
+      exit /b 1
+    )
+  )
+  gh repo clone %REPO% "%DEST%"
+  if errorlevel 1 (
+    echo  No se pudo bajar el proyecto.
+    pause
+    exit /b 1
+  )
+)
+if exist "%TEMP%\ss-cuentas-env.local" copy /Y "%TEMP%\ss-cuentas-env.local" "%DEST%\.env.local" >nul
 exit /b 0
 
 :require
