@@ -10,7 +10,6 @@ export function groupCategory(name: string | null | undefined) {
   if (n.includes("aliment") || n.includes("comida")) return "Comida";
   if (n.includes("super")) return "Supermercado";
   if (n.includes("ocio") || n.includes("entreten")) return "Ocio";
-  if (n.includes("servicio") || n.includes("suscrip")) return "Servicios";
   if (n.includes("transporte")) return "Transporte";
   if (n.includes("cigarrillo")) return "Cigarrillos";
   if (n.includes("sueldo") || n.includes("freelance")) return "Ingresos";

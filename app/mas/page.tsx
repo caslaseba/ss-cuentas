@@ -31,7 +31,7 @@ export default function MasPage() {
         <p className="text-sm text-muted-foreground">
           {beta
             ? "Tarjetas, categorías y ajustes. Los saldos de Mercado Pago y Caja ICBC no se muestran."
-            : "Cierre y vencimiento de la tarjeta, extensión de tu papá, servicios y ajustes."}
+            : "Cierre y vencimiento de la tarjeta, extensión de tu papá, mensuales y ajustes."}
         </p>
       </div>
 
@@ -43,12 +43,12 @@ export default function MasPage() {
 
       {beta ? (
         <p className="text-sm text-muted-foreground">
-          Mercado Pago y Caja ICBC quedan ocultos en beta. Los servicios fijos se gestionan desde Cargar.
+          Mercado Pago y Caja ICBC quedan ocultos en beta. Los mensuales se gestionan desde Cargar.
         </p>
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle>Servicios fijos</CardTitle>
+            <CardTitle>Mensuales</CardTitle>
           </CardHeader>
           <CardContent>
             <RecurringPanel />

@@ -258,9 +258,9 @@ function EditForm({ tx, onDone }: { tx: Transaction; onDone: () => void }) {
             }}
           />
           <span>
-            Es un servicio fijo
+            Es mensual
             <span className="mt-0.5 block text-xs text-muted-foreground">
-              Aparece en Hoy. Se paga con {pickedCard?.name ?? "la tarjeta"}, sin sumar otra vez el gasto.
+              Sigue en su categoría. Se paga con {pickedCard?.name ?? "la tarjeta"}, sin sumar otra vez el gasto.
             </span>
           </span>
         </label>

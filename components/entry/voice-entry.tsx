@@ -129,7 +129,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
           category_id: resolvedCategoryId,
           notes: withObservation(null, observation),
         });
-        toast.success("Servicio mensual guardado");
+        toast.success("Mensual guardado");
         setOpen(false);
         setObservation("");
         speech.setTranscript("");
@@ -232,7 +232,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
             <div className="mb-4 space-y-1 rounded-2xl border border-border p-4">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">
                 {parsed?.intent === "servicio"
-                  ? "Servicio mensual"
+                  ? "Mensual"
                   : type === "ingreso"
                     ? "Ingreso"
                     : method === "tarjeta_credito"
@@ -248,7 +248,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
                     ? parsed.categoryHint
                     : "Sin categoría"}
                 {parsed?.intent === "servicio"
-                  ? " · todos los meses"
+                  ? " · mensual, en su categoría"
                   : method === "tarjeta_credito"
                     ? ` · ${cardName ?? "Tarjeta"}`
                     : " · sale de tu plata"}

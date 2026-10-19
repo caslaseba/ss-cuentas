@@ -1040,7 +1040,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) {
       const base = currentBooks();
       const current = base.recurring.find((r) => r.id === id);
-      if (!current) throw new Error("No se encontró el gasto fijo");
+      if (!current) throw new Error("No se encontró el mensual");
       applySnap({
         ...base,
         recurring: base.recurring.map((item) =>
@@ -1060,7 +1060,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     const current = recurring.find((r) => r.id === id);
-    if (!current) throw new Error("No se encontró el gasto fijo");
+    if (!current) throw new Error("No se encontró el mensual");
     const { error } = await supabase
       .from("recurring_payments")
       .update({

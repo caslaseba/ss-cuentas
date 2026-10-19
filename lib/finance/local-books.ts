@@ -42,6 +42,7 @@ export function localSeed(): FinanceSnapshot {
     cat("cat-serv", "Servicios", "egreso", "zap", 80000),
     cat("cat-ocio", "Ocio", "egreso", "clapperboard", 60000),
     cat("cat-salud", "Salud", "egreso", "heart-pulse", 50000),
+    cat("cat-casa", "Casa", "egreso", "home", 40000),
     cat("cat-otros", "Otros egresos", "egreso", "circle-dot"),
   ];
 
@@ -273,6 +274,20 @@ export function localSeed(): FinanceSnapshot {
       is_paid: true,
       paid_month: `${monthKey()}-01`,
       category_id: "cat-serv",
+      account_id: "acc-icbc",
+      notes: null,
+    },
+    {
+      id: "rec-aysa",
+      user_id: LOCAL_USER_ID,
+      name: "Aysa",
+      amount: 15000,
+      currency: "ARS",
+      frequency: "mensual",
+      due_day: 8,
+      is_paid: false,
+      paid_month: null,
+      category_id: "cat-casa",
       account_id: "acc-icbc",
       notes: null,
     },

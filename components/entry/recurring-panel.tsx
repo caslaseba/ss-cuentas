@@ -86,8 +86,8 @@ export function RecurringPanel() {
             });
             toast.success(
               fixedPay === "plata"
-                ? "Servicio agregado. Lo ves en Hoy para marcarlo pagado."
-                : "Servicio de tarjeta agregado. Aparece en Hoy sin restar de tu plata.",
+                ? "Mensual agregado. Lo ves en su categoría para marcarlo pagado."
+                : "Mensual de tarjeta agregado. Sigue en su categoría, sin restar de tu plata.",
             );
             setFixedName("");
             setFixedAmount("");

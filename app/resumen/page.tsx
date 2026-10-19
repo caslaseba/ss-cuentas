@@ -18,7 +18,7 @@ import { Select } from "@/components/ui/select";
 import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
 import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
-import { cardCoversRecurring, recurringVia } from "@/lib/finance/recurring";
+import { cardCoversRecurring, findRecurringByName, recurringVia } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
 import { cn, formatMoney, isoDate, monthKey } from "@/lib/utils";
@@ -135,6 +135,14 @@ function ResumenInner() {
       .map((item) => `${item.label} ${formatMoney(item.amount, "ARS")}`);
   }
 
+  function rhythmOf(tx: Transaction) {
+    const item = findRecurringByName(recurring, tx.concept);
+    if (!item) return null;
+    if (item.frequency === "semanal") return "Semanal";
+    if (item.frequency === "anual") return "Anual";
+    return "Mensual";
+  }
+
   function groupsFor(txs: Transaction[]) {
     const groups = new Map<string, { label: string; order: number; txs: Transaction[] }>();
     for (const tx of txs) {
@@ -181,6 +189,7 @@ function ResumenInner() {
 
   function serviceCard(r: RecurringPayment) {
     const via = recurringVia(r);
+    const catName = categories.find((item) => item.id === r.category_id)?.name;
     if (via.onCard) {
       const onCard = cardCoversRecurring(r, transactions, cursor);
       const card = cards.find((item) => item.id === via.cardId) ?? (via.cardId === papa?.id ? papa : mine);
@@ -196,7 +205,8 @@ function ResumenInner() {
             {formatMoney(Number(r.amount), r.currency)}
           </p>
           <p className="truncate text-[9px] leading-tight text-muted-foreground">
-            {r.frequency === "semanal" ? "Cada semana · " : ""}
+            {catName ? `${catName} · ` : ""}
+            {r.frequency === "semanal" ? "Semanal · " : "Mensual · "}
             {card ? labelFor(card) : "Tarjeta"}
             {onCard ? " · en resumen" : " · se debita"}
           </p>
@@ -219,6 +229,8 @@ function ResumenInner() {
             {formatMoney(Number(r.amount), r.currency)}
           </p>
           <p className="truncate text-[9px] leading-tight text-muted-foreground">
+            {catName ? `${catName} · ` : ""}
+            {r.frequency === "semanal" ? "Semanal · " : "Mensual · "}
             {isPaid
               ? `PAGADO${linked ? ` ${format(parseISO(linked.occurred_on), "d/M")}` : ""}`
               : `Día ${r.due_day}`}
@@ -423,7 +435,11 @@ function ResumenInner() {
           <div className="space-y-1">
             {categoryRows.map((row) => {
               const open = openCats.includes(row.name);
+              const egresos = row.txs.filter((tx) => tx.type === "egreso");
+              const marks = [...new Set(egresos.map((tx) => rhythmOf(tx) ?? ""))].filter(Boolean);
+              const onlyMark = marks.length === 1 && egresos.every((tx) => rhythmOf(tx) === marks[0]) ? marks[0].toUpperCase() : null;
               const parts = source === "todas" ? splitLine(row.txs) : [];
+              const detail = [onlyMark, ...parts].filter(Boolean).join(" · ");
               const groups = open ? groupsFor(row.txs) : [];
               return (
                 <div key={row.name}>
@@ -438,8 +454,8 @@ function ResumenInner() {
                   >
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-medium leading-tight">{row.name}</span>
-                      {parts.length > 0 ? (
-                        <span className="block truncate text-[11px] leading-tight text-muted-foreground">{parts.join(" · ")}</span>
+                      {detail ? (
+                        <span className="block truncate text-[11px] leading-tight text-muted-foreground">{detail}</span>
                       ) : null}
                     </span>
                     <span className="flex shrink-0 items-center gap-1 text-sm font-semibold tabular-nums">
@@ -461,6 +477,7 @@ function ResumenInner() {
                               categories={categories}
                               cards={cards}
                               installments={installments}
+                              tag={rhythmOf(tx)}
                               onSelect={selectTx}
                             />
                           ))}
@@ -479,9 +496,9 @@ function ResumenInner() {
 
       {services.length > 0 ? (
         <div className="space-y-1.5 pb-4">
-          <h2 className="text-xs font-medium">Servicios</h2>
+          <h2 className="text-xs font-medium">Mensual</h2>
           <p className="text-[11px] text-muted-foreground">
-            Si se debitan de una tarjeta, también entran en esa tarjeta. Los semanales, todas las semanas del mes.
+            Siguen en su categoría. Acá los marcás pagados.
           </p>
           <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">{services.map((item) => serviceCard(item))}</div>
         </div>

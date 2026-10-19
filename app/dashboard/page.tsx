@@ -21,7 +21,7 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Cargar</h1>
         <p className="text-sm text-muted-foreground">
           {beta
-            ? "Ingreso, gasto o servicio mensual. Tocá Estable arriba para volver a la versión anterior."
+            ? "Ingreso, gasto o mensual. Tocá Estable arriba para volver a la versión anterior."
             : "Ingreso o gasto. El resto está en el resumen."}
         </p>
       </div>
@@ -42,7 +42,7 @@ export default function DashboardPage() {
       {beta ? (
         <Button type="button" size="lg" className="h-12 w-full" variant="outline" onClick={() => setServicesOpen(true)}>
           <Repeat className="h-5 w-5" />
-          Servicios fijos
+          Mensuales
         </Button>
       ) : null}
 
@@ -56,7 +56,7 @@ export default function DashboardPage() {
       <Dialog open={servicesOpen} onOpenChange={setServicesOpen}>
         <DialogContent className="w-[min(100%-1rem,36rem)]">
           <DialogHeader>
-            <DialogTitle>Servicios fijos</DialogTitle>
+            <DialogTitle>Mensuales</DialogTitle>
           </DialogHeader>
           <RecurringPanel />
         </DialogContent>

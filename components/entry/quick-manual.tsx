@@ -159,7 +159,7 @@ export function QuickManual() {
           category_id: cat?.id ?? null,
           notes: withObservation(null, observation),
         });
-        toast.success("Servicio mensual guardado");
+        toast.success("Mensual guardado");
         setConcept("");
         setAmount("");
         setCategoryId("");
@@ -208,7 +208,7 @@ export function QuickManual() {
           credit_card_id: resolvedCard,
           category_id: cat?.id ?? null,
         });
-        toast.message("Quedó como servicio fijo: se debita de la tarjeta, no de tu plata.");
+        toast.message("Quedó como mensual: se debita de la tarjeta y sigue en su categoría.");
       }
       setConcept("");
       setAmount("");
@@ -238,7 +238,7 @@ export function QuickManual() {
             ["ingreso", "Ingreso"],
             ["transferencia", beta ? "Gasto" : "Transferencia"],
             ["tarjeta", "Tarjeta"],
-            ...(beta ? ([["servicio", "Servicio"]] as const) : []),
+            ...(beta ? ([["servicio", "Mensual"]] as const) : []),
           ] as const
         ).map(([id, label]) => (
           <button
@@ -273,7 +273,7 @@ export function QuickManual() {
       </label>
       <p className="text-[11px] text-muted-foreground">
         {mode === "servicio"
-          ? "Figura hoy. El día de esta fecha es el vencimiento de cada mes."
+          ? "Figura hoy. El día de esta fecha es el vencimiento de cada mes. La categoría no cambia."
           : "Figura hoy. Cambiala si el gasto o el ingreso fue otro día."}
       </p>
       <Input
@@ -281,7 +281,7 @@ export function QuickManual() {
         value={concept}
         onChange={(e) => setConcept(e.target.value)}
         placeholder={
-          mode === "servicio" ? "Netflix, luz, internet…" : mode === "ingreso" ? "Cumpleaños, sueldo…" : "Milanesa, cigarrillos, asado…"
+          mode === "servicio" ? "Aysa, luz, Netflix…" : mode === "ingreso" ? "Cumpleaños, sueldo…" : "Milanesa, cigarrillos, asado…"
         }
       />
       <div className={mode === "tarjeta" || (beta && (mode === "ingreso" || mode === "servicio")) ? "grid grid-cols-[1fr_auto] gap-2" : ""}>
@@ -312,7 +312,7 @@ export function QuickManual() {
           type={mode === "ingreso" ? "ingreso" : "egreso"}
           value={categoryName}
           onChange={setCategoryName}
-          placeholder={mode === "servicio" ? "Categoría, por ejemplo Netflix" : "Categoría nueva o existente"}
+          placeholder={mode === "servicio" ? "Categoría, por ejemplo Casa" : "Categoría nueva o existente"}
         />
       ) : (
         <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
@@ -386,12 +386,12 @@ export function QuickManual() {
                 onChange={(e) => setAsFixed(e.target.checked)}
                 className="h-4 w-4 accent-violet-700"
               />
-              Es un servicio fijo mensual
+              Es mensual
             </label>
           )}
           {asFixed && pickedCard ? (
             <p className="text-xs text-muted-foreground">
-              Aparece en Servicios a pagar · se paga con {pickedCard.name}, sin duplicar el gasto.
+              Sigue en su categoría y figura en Mensual. Se paga con {pickedCard.name}, sin duplicar el gasto.
             </p>
           ) : null}
         </>

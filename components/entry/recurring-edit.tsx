@@ -29,7 +29,7 @@ export function RecurringEdit({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Editar gasto fijo</DialogTitle>
+          <DialogTitle>Editar mensual</DialogTitle>
         </DialogHeader>
         <EditForm item={item} onDone={() => onOpenChange(false)} />
       </DialogContent>
@@ -65,7 +65,7 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
         category_id: categoryId || null,
         notes: withRecurringVia(item.notes, onCard, onCard ? cardId : null),
       });
-      toast.success("Gasto fijo actualizado");
+      toast.success("Mensual actualizado");
       onDone();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo guardar");
@@ -79,7 +79,7 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
     setBusy(true);
     try {
       await deleteRecurring(item.id);
-      toast.success("Gasto fijo borrado");
+      toast.success("Mensual borrado");
       onDone();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo borrar");

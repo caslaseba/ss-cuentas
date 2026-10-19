@@ -12,10 +12,12 @@ import {
   usdToLocal,
 } from "@/lib/finance/settlement";
 import {
+  PROJECTED_FIJO_PREFIX,
   cardChargesInMonth,
   cardRefForMonth,
   cashMonthMoves,
   cashMonthSpend,
+  cashRecurringPaid,
   cursorFromMes,
   isOnOrBeforeClose,
   projectedCardRecurringTxs,
@@ -103,8 +105,12 @@ export function useMonthView(initial?: Date) {
 
   const realCashMoves = cashMonthMoves(wallet.monthTx);
   const projectedFijos =
-    isFuture && profile
-      ? projectedCashTxs(recurring, cursor, realCashMoves, profile.id)
+    profile && !isPast
+      ? projectedCashTxs(recurring, cursor, realCashMoves, profile.id).filter((tx) => {
+          const item = recurring.find((r) => tx.id.startsWith(`${PROJECTED_FIJO_PREFIX}${r.id}-`));
+          if (!item) return true;
+          return !cashRecurringPaid(item, transactions, cursor, isCurrent);
+        })
       : [];
   const cashMoves = uniqueById([...realCashMoves, ...projectedFijos]);
   const cashSpend = cashMonthSpend(cashMoves);
@@ -127,7 +133,7 @@ export function useMonthView(initial?: Date) {
     spendOnCard(billBefore, papa?.id ?? null, toArs) + spendOnCard(billAfter, papa?.id ?? null, toArs);
 
   const typicalSalary = typicalMonthlySalary(transactions, toArs, now);
-  const extraFijos = projectedFijos.reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
+  const extraFijos = (isFuture ? projectedFijos : []).reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
   const cobrado = isFuture && wallet.cobrado <= 0 ? typicalSalary : wallet.cobrado;
   const gastadoContado = wallet.gastadoContado + extraFijos;
   const queda = cobrado - gastadoContado;

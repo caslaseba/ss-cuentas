@@ -68,7 +68,7 @@ export function ResetData() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Borra los movimientos, tarjetas, cuotas, servicios y saldos de esta cuenta. El usuario y la contraseña siguen.
+            Borra los movimientos, tarjetas, cuotas, mensuales y saldos de esta cuenta. El usuario y la contraseña siguen.
           </p>
           <Button type="button" variant="outline" disabled={!online} onClick={start}>
             {online ? "Resetear todos los datos" : "Hace falta internet para resetear"}
@@ -90,7 +90,7 @@ export function ResetData() {
               <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
                 <li>{transactions.length} movimientos (ingresos y gastos)</li>
                 <li>{installments.length} planes de cuotas</li>
-                <li>{recurring.length} servicios fijos</li>
+                <li>{recurring.length} mensuales</li>
                 <li>{cards.length} tarjetas y su cierre</li>
                 <li>{accounts.length} cuentas, con el saldo en cero</li>
                 <li>{categories.length} categorías, y vuelven las de siempre</li>

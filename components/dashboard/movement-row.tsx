@@ -22,6 +22,7 @@ export function MovementRow({
   categories,
   cards,
   installments,
+  tag = null,
   onSelect,
 }: {
   tx: Transaction;
@@ -29,6 +30,7 @@ export function MovementRow({
   cards: CreditCard[];
   installments: Installment[];
   cycleEnd?: Date | null;
+  tag?: string | null;
   onSelect: (tx: Transaction) => void;
 }) {
   const cat = categories.find((c) => c.id === tx.category_id)?.name;
@@ -79,6 +81,11 @@ export function MovementRow({
           {tx.type === "egreso" ? (
             <span className={cn("rounded-full border px-1.5 py-0 text-[9px] font-medium", categoryChipClass(catGroup))}>
               {catGroup}
+            </span>
+          ) : null}
+          {tag ? (
+            <span className="rounded-full border border-teal-500/40 bg-teal-500/15 px-1.5 py-0 text-[9px] font-semibold uppercase text-teal-950 dark:text-teal-100">
+              {tag}
             </span>
           ) : null}
           {tx.payment_method === "tarjeta_credito" ? (
