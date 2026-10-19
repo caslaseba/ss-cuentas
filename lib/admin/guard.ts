@@ -1,4 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { LOCAL_USER_ID } from "@/lib/finance/local-books";
 import { asRecord, hasServiceRoleKey, supabaseHttps } from "@/lib/supabase/https";
 
 export type AdminSession = {
@@ -17,6 +19,13 @@ export async function requireAdmin(): Promise<
   | { ok: true; user: AdminSession; hasServiceRole: boolean }
   | { ok: false; status: number; error: string }
 > {
+  if (!hasSupabaseConfig()) {
+    return {
+      ok: true,
+      user: { id: LOCAL_USER_ID, email: "sebastian@local" },
+      hasServiceRole: false,
+    };
+  }
   const supabase = await createClient();
   const {
     data: { user },

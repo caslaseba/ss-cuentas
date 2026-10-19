@@ -1,4 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { localSeed } from "@/lib/finance/local-books";
 import { withTimeout } from "@/lib/async";
 
 export const runtime = "nodejs";
@@ -10,6 +12,10 @@ function messageOf(error: { message?: string; code?: string } | null) {
 }
 
 export async function GET() {
+  if (!hasSupabaseConfig()) {
+    const snap = localSeed();
+    return Response.json(snap);
+  }
   try {
     const supabase = await createClient();
     const { data: userData, error: userError } = await withTimeout(supabase.auth.getUser(), 8000);

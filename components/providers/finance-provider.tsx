@@ -3,8 +3,17 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { enqueueOutbox, readOutbox, removeOutbox } from "@/lib/offline/sync";
-import { applyOutboxToSnapshot, readFinanceSnapshot, writeFinanceSnapshot } from "@/lib/offline/snapshot";
+import { applyOutboxToSnapshot, readFinanceSnapshot, writeFinanceSnapshot, type FinanceSnapshot } from "@/lib/offline/snapshot";
+import {
+  LOCAL_USER_ID,
+  localAddAccount,
+  localAddCard,
+  localAddCategory,
+  localAddTransaction,
+  localSeed,
+} from "@/lib/finance/local-books";
 import { findIcbcAccount, findMpAccount, ICBC_ACCOUNT_NAME, MP_ACCOUNT_NAME, walletForMethod } from "@/lib/finance/accounts";
 import { DAD_CARD_NAME, MY_CARD_NAME, householdCards, isPapaCard } from "@/lib/finance/cards";
 import {
@@ -124,7 +133,9 @@ function loadFailureMessage(err: unknown) {
 const FinanceContext = createContext<FinanceContextValue | null>(null);
 
 export function FinanceProvider({ children }: { children: React.ReactNode }) {
-  const supabase = useMemo(() => createClient(), []);
+  const remote = hasSupabaseConfig();
+  const supabase = useMemo(() => (remote ? createClient() : null), [remote]);
+  const booksRef = useRef<FinanceSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [online, setOnline] = useState(true);
@@ -137,7 +148,22 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [recurring, setRecurring] = useState<RecurringPayment[]>([]);
 
+  const applySnap = useCallback((snap: FinanceSnapshot) => {
+    booksRef.current = snap;
+    setProfile(snap.profile);
+    setCategories(snap.categories);
+    setAccounts(snap.accounts);
+    setCards(snap.cards);
+    setTransactions(snap.transactions);
+    setInstallments(snap.installments);
+    setRecurring(snap.recurring);
+    writeFinanceSnapshot(snap);
+  }, []);
+
+  const currentBooks = useCallback(() => booksRef.current ?? localSeed(), []);
+
   const currentUser = useCallback(async () => {
+    if (!supabase) return { id: LOCAL_USER_ID };
     try {
       const { data: sessionData } = await withTimeout(supabase.auth.getSession(), 5000);
       if (sessionData.session?.user) return sessionData.session.user;
@@ -155,6 +181,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
   const primeHousehold = useCallback(
     async (body: BootstrapBody) => {
+      if (!supabase) return;
       let cats = body.categories;
       if (!cats.some((x) => x.name === "Transferencia" && x.type === "ingreso")) {
         const { data: createdTransfer } = await withTimeout(
@@ -266,6 +293,14 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   );
 
   const refresh = useCallback(async () => {
+    if (!supabase) {
+      const snap = readFinanceSnapshot(LOCAL_USER_ID) ?? localSeed();
+      applySnap(snap);
+      setPendingSync(0);
+      setLoadError(null);
+      setLoading(false);
+      return;
+    }
     try {
       const cachedNow = readFinanceSnapshot();
       if (cachedNow) {
@@ -330,9 +365,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [primeHousehold]);
+  }, [applySnap, primeHousehold, supabase]);
 
   const flushOutbox = useCallback(async () => {
+    if (!supabase) return;
     const items = await readOutbox();
     let synced = 0;
     for (const item of items) {
@@ -357,6 +393,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       await refresh();
     }
   }, [refresh, supabase]);
+
 
   useEffect(() => {
     const watchdog = window.setTimeout(() => setLoading(false), 8000);
@@ -399,21 +436,28 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       if (document.visibilityState === "visible") pull();
     }, 8000);
     const channel = supabase
-      .channel("ss-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "transactions" }, pull)
-      .on("postgres_changes", { event: "*", schema: "public", table: "recurring_payments" }, pull)
-      .on("postgres_changes", { event: "*", schema: "public", table: "accounts" }, pull)
-      .on("postgres_changes", { event: "*", schema: "public", table: "installments" }, pull)
-      .subscribe();
+      ? supabase
+          .channel("ss-live")
+          .on("postgres_changes", { event: "*", schema: "public", table: "transactions" }, pull)
+          .on("postgres_changes", { event: "*", schema: "public", table: "recurring_payments" }, pull)
+          .on("postgres_changes", { event: "*", schema: "public", table: "accounts" }, pull)
+          .on("postgres_changes", { event: "*", schema: "public", table: "installments" }, pull)
+          .subscribe()
+      : null;
     return () => {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVis);
       window.clearInterval(tick);
-      void supabase.removeChannel(channel);
+      if (supabase && channel) void supabase.removeChannel(channel);
     };
   }, [supabase]);
 
   const saveTransaction: FinanceContextValue["saveTransaction"] = async (input) => {
+    if (!supabase) {
+      applySnap(localAddTransaction(currentBooks(), input));
+      toast.success("Guardado en esta sesión.");
+      return;
+    }
     const user = await currentUser();
     if (!user) throw new Error("Sin sesión");
 
@@ -487,6 +531,46 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const saveInstallmentPurchase: FinanceContextValue["saveInstallmentPurchase"] = async (input) => {
+    if (!supabase) {
+      const count = input.count;
+      const installmentAmount = input.installmentAmount;
+      const total = input.totalAmount ?? installmentAmount * count;
+      const current = Math.min(Math.max(input.current ?? 1, 1), count);
+      const plan: Installment = {
+        id: `inst-${Date.now()}`,
+        user_id: LOCAL_USER_ID,
+        credit_card_id: input.credit_card_id,
+        concept: input.concept,
+        currency: input.currency,
+        total_amount: total,
+        installment_count: count,
+        installment_amount: installmentAmount,
+        start_date: input.occurred_on,
+        current_installment: current,
+      };
+      const base = currentBooks();
+      applySnap(
+        localAddTransaction(
+          { ...base, installments: [plan, ...base.installments] },
+          {
+            type: "egreso",
+            amount: installmentAmount,
+            currency: input.currency,
+            concept: input.concept,
+            payment_method: "tarjeta_credito",
+            credit_card_id: input.credit_card_id,
+            category_id: input.category_id ?? null,
+            occurred_on: input.occurred_on,
+            installment_id: plan.id,
+            installment_number: current,
+            source: input.source ?? "cuota",
+            notes: input.notes ?? null,
+          },
+        ),
+      );
+      toast.success("Guardado en esta sesión.");
+      return;
+    }
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -531,6 +615,11 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const saveAccount: FinanceContextValue["saveAccount"] = async (input) => {
+    if (!supabase) {
+      applySnap(localAddAccount(currentBooks(), input));
+      toast.success("Guardado en esta sesión.");
+      return;
+    }
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -549,12 +638,26 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateAccount: FinanceContextValue["updateAccount"] = async (id, patch) => {
+    if (!supabase) {
+      const base = currentBooks();
+      applySnap({
+        ...base,
+        accounts: base.accounts.map((account) => (account.id === id ? { ...account, ...patch } : account)),
+      });
+      return;
+    }
     const { error } = await supabase.from("accounts").update(patch).eq("id", id);
     if (error) throw error;
     setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
   };
 
   const saveCard: FinanceContextValue["saveCard"] = async (input) => {
+    if (!supabase) {
+      const result = localAddCard(currentBooks(), input);
+      applySnap(result.snap);
+      toast.success("Guardado en esta sesión.");
+      return result.card;
+    }
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -589,13 +692,31 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const applyWallet = async (accountId: string | null, delta: number) => {
-    if (!accountId || !delta) return;
+    if (!accountId || !delta || !supabase) return;
     const acc = accounts.find((a) => a.id === accountId);
     if (!acc) return;
     await supabase.from("accounts").update({ balance: Number(acc.balance) + delta }).eq("id", accountId);
   };
 
   const updateCard: FinanceContextValue["updateCard"] = async (id, patch) => {
+    if (!supabase) {
+      const base = currentBooks();
+      applySnap({
+        ...base,
+        cards: base.cards.map((card) => {
+          if (card.id === id) return { ...card, ...patch };
+          if (card.parent_card_id === id && (patch.closing_day != null || patch.due_day != null)) {
+            return {
+              ...card,
+              closing_day: patch.closing_day ?? card.closing_day,
+              due_day: patch.due_day ?? card.due_day,
+            };
+          }
+          return card;
+        }),
+      });
+      return;
+    }
     const safe: Record<string, unknown> = {};
     if (patch.name != null) safe.name = patch.name;
     if (patch.closing_day != null) safe.closing_day = patch.closing_day;
@@ -622,6 +743,34 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateTransaction: FinanceContextValue["updateTransaction"] = async (id, patch) => {
+    if (!supabase) {
+      const base = currentBooks();
+      const current = base.transactions.find((t) => t.id === id);
+      if (!current) throw new Error("No se encontró el gasto");
+      const next: Transaction = {
+        ...current,
+        ...patch,
+        amount: patch.amount ?? current.amount,
+        concept: patch.concept ?? current.concept,
+      };
+      const oldDelta = next.payment_method === "tarjeta_credito" ? 0 : current.payment_method === "tarjeta_credito" ? 0 : current.type === "ingreso" ? Number(current.amount) : -Number(current.amount);
+      const newDelta = next.payment_method === "tarjeta_credito" ? 0 : next.type === "ingreso" ? Number(next.amount) : -Number(next.amount);
+      let accounts = base.accounts;
+      const oldWallet = current.payment_method === "tarjeta_credito" ? null : current.account_id;
+      const newWallet = next.payment_method === "tarjeta_credito" ? null : next.account_id;
+      if (oldWallet && newWallet && oldWallet === newWallet) {
+        accounts = accounts.map((a) => (a.id === oldWallet ? { ...a, balance: Number(a.balance) + (newDelta - oldDelta) } : a));
+      } else {
+        if (oldWallet) accounts = accounts.map((a) => (a.id === oldWallet ? { ...a, balance: Number(a.balance) - oldDelta } : a));
+        if (newWallet) accounts = accounts.map((a) => (a.id === newWallet ? { ...a, balance: Number(a.balance) + newDelta } : a));
+      }
+      applySnap({
+        ...base,
+        accounts,
+        transactions: base.transactions.map((t) => (t.id === id ? next : t)),
+      });
+      return;
+    }
     const current = transactions.find((t) => t.id === id);
     if (!current) throw new Error("No se encontró el gasto");
     if (current.id.startsWith("local-")) throw new Error("Ese movimiento todavía no se sincronizó");
@@ -671,6 +820,21 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteTransaction: FinanceContextValue["deleteTransaction"] = async (id) => {
+    if (!supabase) {
+      const base = currentBooks();
+      const current = base.transactions.find((t) => t.id === id);
+      if (!current) throw new Error("No se encontró el gasto");
+      const delta = current.payment_method === "tarjeta_credito" ? 0 : current.type === "ingreso" ? Number(current.amount) : -Number(current.amount);
+      applySnap({
+        ...base,
+        transactions: base.transactions.filter((t) => t.id !== id),
+        accounts:
+          current.account_id && delta
+            ? base.accounts.map((a) => (a.id === current.account_id ? { ...a, balance: Number(a.balance) - delta } : a))
+            : base.accounts,
+      });
+      return;
+    }
     const current = transactions.find((t) => t.id === id);
     if (!current) throw new Error("No se encontró el gasto");
     if (current.id.startsWith("local-")) throw new Error("Ese movimiento todavía no se sincronizó");
@@ -687,6 +851,47 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     amountIsTotal,
     current = 1,
   ) => {
+    if (!supabase) {
+      const base = currentBooks();
+      const tx = base.transactions.find((t) => t.id === transactionId);
+      if (!tx) throw new Error("No se encontró el gasto");
+      if (tx.payment_method !== "tarjeta_credito" || !tx.credit_card_id) {
+        throw new Error("Solo se pueden pasar a cuotas gastos de tarjeta");
+      }
+      if (tx.installment_id) throw new Error("Ese gasto ya está en cuotas");
+      if (count < 2) throw new Error("Mínimo 2 cuotas");
+      const currentN = Math.min(Math.max(current, 1), count);
+      const total = amountIsTotal ? Number(tx.amount) : Number(tx.amount) * count;
+      const installmentAmount = amountIsTotal ? Number((total / count).toFixed(2)) : Number(tx.amount);
+      const plan: Installment = {
+        id: `inst-${Date.now()}`,
+        user_id: LOCAL_USER_ID,
+        credit_card_id: tx.credit_card_id,
+        concept: tx.concept,
+        currency: tx.currency,
+        total_amount: total,
+        installment_count: count,
+        installment_amount: installmentAmount,
+        start_date: tx.occurred_on,
+        current_installment: currentN,
+      };
+      applySnap({
+        ...base,
+        installments: [plan, ...base.installments],
+        transactions: base.transactions.map((item) =>
+          item.id === transactionId
+            ? {
+                ...item,
+                amount: installmentAmount,
+                installment_id: plan.id,
+                installment_number: currentN,
+                source: "cuota",
+              }
+            : item,
+        ),
+      });
+      return;
+    }
     const tx = transactions.find((t) => t.id === transactionId);
     if (!tx) throw new Error("No se encontró el gasto");
     if (tx.id.startsWith("local-")) throw new Error("Ese movimiento todavía no se sincronizó");
@@ -737,6 +942,29 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateInstallment: FinanceContextValue["updateInstallment"] = async (id, patch) => {
+    if (!supabase) {
+      const base = currentBooks();
+      const plan = base.installments.find((i) => i.id === id);
+      if (!plan) throw new Error("No se encontró el plan de cuotas");
+      const current = Math.min(
+        Math.max(patch.current_installment ?? plan.current_installment, 1),
+        patch.installment_count ?? plan.installment_count,
+      );
+      const count = Math.max(patch.installment_count ?? plan.installment_count, current);
+      const amount = patch.installment_amount ?? plan.installment_amount;
+      applySnap({
+        ...base,
+        installments: base.installments.map((item) =>
+          item.id === id
+            ? { ...item, current_installment: current, installment_count: count, installment_amount: amount, total_amount: amount * count }
+            : item,
+        ),
+        transactions: base.transactions.map((item) =>
+          item.installment_id === id ? { ...item, amount, installment_number: current } : item,
+        ),
+      });
+      return;
+    }
     const plan = installments.find((i) => i.id === id);
     if (!plan) throw new Error("No se encontró el plan de cuotas");
     const current = Math.min(
@@ -770,6 +998,26 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const saveRecurring: FinanceContextValue["saveRecurring"] = async (input) => {
+    if (!supabase) {
+      const base = currentBooks();
+      const row: RecurringPayment = {
+        id: `rec-${Date.now()}`,
+        user_id: LOCAL_USER_ID,
+        name: input.name,
+        amount: input.amount,
+        currency: input.currency ?? "ARS",
+        frequency: input.frequency ?? "mensual",
+        due_day: input.due_day ?? 1,
+        is_paid: false,
+        paid_month: null,
+        category_id: input.category_id ?? null,
+        account_id: input.account_id ?? null,
+        notes: input.notes ?? null,
+      };
+      applySnap({ ...base, recurring: [...base.recurring, row] });
+      toast.success("Guardado en esta sesión.");
+      return;
+    }
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -791,6 +1039,28 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateRecurring: FinanceContextValue["updateRecurring"] = async (id, patch) => {
+    if (!supabase) {
+      const base = currentBooks();
+      const current = base.recurring.find((r) => r.id === id);
+      if (!current) throw new Error("No se encontró el gasto fijo");
+      applySnap({
+        ...base,
+        recurring: base.recurring.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                name: patch.name ?? item.name,
+                amount: patch.amount ?? item.amount,
+                due_day: patch.due_day ?? item.due_day,
+                currency: patch.currency ?? item.currency,
+                category_id: patch.category_id === undefined ? item.category_id : patch.category_id,
+                notes: patch.notes === undefined ? item.notes : patch.notes,
+              }
+            : item,
+        ),
+      });
+      return;
+    }
     const current = recurring.find((r) => r.id === id);
     if (!current) throw new Error("No se encontró el gasto fijo");
     const { error } = await supabase
@@ -809,12 +1079,27 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteRecurring: FinanceContextValue["deleteRecurring"] = async (id) => {
+    if (!supabase) {
+      const base = currentBooks();
+      applySnap({ ...base, recurring: base.recurring.filter((item) => item.id !== id) });
+      return;
+    }
     const { error } = await supabase.from("recurring_payments").delete().eq("id", id);
     if (error) throw error;
     await refresh();
   };
 
   const toggleRecurringPaid = async (id: string, paid: boolean) => {
+    if (!supabase) {
+      const base = currentBooks();
+      applySnap({
+        ...base,
+        recurring: base.recurring.map((item) =>
+          item.id === id ? { ...item, is_paid: paid, paid_month: paid ? `${monthKey()}-01` : null } : item,
+        ),
+      });
+      return;
+    }
     const { error } = await supabase
       .from("recurring_payments")
       .update({
@@ -861,6 +1146,13 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateProfile = async (patch: Partial<Profile>) => {
+    if (!supabase) {
+      const base = currentBooks();
+      if (!base.profile) return;
+      const { id: _id, role: _role, ...safe } = patch;
+      applySnap({ ...base, profile: { ...base.profile, ...safe } });
+      return;
+    }
     if (!profile) return;
     const { id: _id, role: _role, ...safe } = patch;
     const { error } = await supabase.from("profiles").update(safe).eq("id", profile.id);
@@ -869,12 +1161,25 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateCategoryLimit = async (id: string, monthly_limit: number | null) => {
+    if (!supabase) {
+      const base = currentBooks();
+      applySnap({
+        ...base,
+        categories: base.categories.map((item) => (item.id === id ? { ...item, monthly_limit } : item)),
+      });
+      return;
+    }
     const { error } = await supabase.from("categories").update({ monthly_limit }).eq("id", id);
     if (error) throw error;
     await refresh();
   };
 
   const saveCategory: FinanceContextValue["saveCategory"] = async (input) => {
+    if (!supabase) {
+      const result = localAddCategory(currentBooks(), input);
+      applySnap(result.snap);
+      return result.category;
+    }
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -903,6 +1208,20 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateCategory: FinanceContextValue["updateCategory"] = async (id, patch) => {
+    if (!supabase) {
+      const name = patch.name.trim();
+      if (!name) throw new Error("Poné un nombre de categoría");
+      const base = currentBooks();
+      const current = base.categories.find((item) => item.id === id);
+      if (current && base.categories.some((item) => item.id !== id && item.type === current.type && item.name.toLowerCase() === name.toLowerCase())) {
+        throw new Error("Esa categoría ya existe");
+      }
+      applySnap({
+        ...base,
+        categories: base.categories.map((item) => (item.id === id ? { ...item, name } : item)),
+      });
+      return;
+    }
     const name = patch.name.trim();
     if (!name) throw new Error("Poné un nombre de categoría");
     const { error } = await supabase.from("categories").update({ name }).eq("id", id);
@@ -916,6 +1235,11 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteCategory: FinanceContextValue["deleteCategory"] = async (id) => {
+    if (!supabase) {
+      const base = currentBooks();
+      applySnap({ ...base, categories: base.categories.filter((item) => item.id !== id) });
+      return;
+    }
     const { error } = await supabase.from("categories").delete().eq("id", id);
     if (error) throw error;
     await refresh();

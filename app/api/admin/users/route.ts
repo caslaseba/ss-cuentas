@@ -1,7 +1,20 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin/guard";
 import { createManagedUser, listManagedUsers } from "@/lib/admin/users";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
+import { LOCAL_USER_ID } from "@/lib/finance/local-books";
 import type { UserRole } from "@/lib/types";
+
+const LOCAL_USERS = [
+  {
+    id: LOCAL_USER_ID,
+    email: "sebastian@local",
+    full_name: "Sebastian",
+    role: "admin" as const,
+    created_at: null,
+    last_sign_in_at: null,
+  },
+];
 
 export const runtime = "nodejs";
 
@@ -9,6 +22,9 @@ export async function GET() {
   const result = await requireAdmin();
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });
+  }
+  if (!hasSupabaseConfig()) {
+    return NextResponse.json({ users: LOCAL_USERS, local: true });
   }
   if (!result.hasServiceRole) {
     return NextResponse.json(

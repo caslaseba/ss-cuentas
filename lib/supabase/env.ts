@@ -1,3 +1,11 @@
+export function hasSupabaseConfig() {
+  const url = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
+  if (!url || !key) return false;
+  if (url.includes("TU_PROYECTO") || key.startsWith("tu_")) return false;
+  return true;
+}
+
 /** Project URL only: https://xxxx.supabase.co — never /rest/v1 or /auth/v1. */
 export function normalizeSupabaseUrl(raw?: string | null) {
   const trimmed = raw?.trim().replace(/^["']|["']$/g, "").replace(/\r/g, "") ?? "";

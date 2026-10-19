@@ -10,6 +10,7 @@ import { ZoomToggle } from "@/components/layout/zoom-toggle";
 import { FinanceProvider, useFinance } from "@/components/providers/finance-provider";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
+import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { EditionToggle } from "@/components/layout/edition-toggle";
 import { useEdition } from "@/components/providers/edition-provider";
 import { CalculatorWidget } from "@/components/tools/calculator";
@@ -44,6 +45,10 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const { beta } = useEdition();
 
   async function logout() {
+    if (!hasSupabaseConfig()) {
+      router.replace("/dashboard");
+      return;
+    }
     const supabase = createClient();
     await supabase.auth.signOut();
     router.replace("/login");
@@ -61,7 +66,11 @@ function ShellInner({ children }: { children: React.ReactNode }) {
               <EditionToggle />
             </div>
             <p className="text-[11px] text-muted-foreground" suppressHydrationWarning>
-              {online ? "En línea" : "Sin señal · se actualiza al volver"}
+              {hasSupabaseConfig()
+                ? online
+                  ? "En línea"
+                  : "Sin señal · se actualiza al volver"
+                : "Sesión local · Cargar, Resumen y Más"}
               {pendingSync > 0 ? ` · ${pendingSync} pendiente${pendingSync === 1 ? "" : "s"}` : ""}
             </p>
           </div>

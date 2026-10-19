@@ -1,6 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { normalizeSupabaseUrl } from "@/lib/supabase/env";
+import { hasSupabaseConfig, normalizeSupabaseUrl } from "@/lib/supabase/env";
 import { withTimeout } from "@/lib/async";
 
 const PUBLIC_PATHS = [
@@ -25,7 +25,13 @@ export async function updateSession(request: NextRequest) {
   const url = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
 
-  if (!url || !key) {
+  if (!url || !key || !hasSupabaseConfig()) {
+    if (path === "/" || path === "/login" || path === "/register") {
+      const redirect = request.nextUrl.clone();
+      redirect.pathname = "/dashboard";
+      redirect.search = "";
+      return NextResponse.redirect(redirect);
+    }
     return supabaseResponse;
   }
 
