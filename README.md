@@ -10,9 +10,16 @@ Next.js (App Router) + Supabase + Tailwind + Web Speech API.
 
 ## 2. Instalar
 
+En la PC, el archivo `SS Cuentas.bat` baja o actualiza [caslaseba/ss-cuentas](https://github.com/caslaseba/ss-cuentas), instala dependencias y trae las claves desde Vercel. La carpeta para abrir en Cursor queda en el Escritorio: `ss-cuentas`.
+
+A mano:
+
 ```bash
+gh repo clone caslaseba/ss-cuentas
 cd ss-cuentas
 npm install
+npx vercel link --project ss-cuentas --scope gallo-system --yes
+npx vercel env pull .env.local --yes --scope gallo-system
 ```
 
 Copiá las variables:

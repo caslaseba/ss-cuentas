@@ -51,6 +51,20 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if exist "%DEST%\.git" (
+  echo  Actualizando el codigo desde GitHub...
+  git pull --ff-only origin master
+  if errorlevel 1 (
+    echo  No pude actualizar. Si editaste archivos en esta carpeta, guardalos y volve a abrir.
+    pause
+    exit /b 1
+  )
+) else (
+  echo  Esta carpeta no es el repo de GitHub. El codigo puede quedar viejo.
+  echo  Borra %DEST% y volve a abrir este archivo para bajarlo de nuevo.
+  echo.
+)
+
 echo  Instalando dependencias...
 call npm install
 if errorlevel 1 (
