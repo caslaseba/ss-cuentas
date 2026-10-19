@@ -196,6 +196,7 @@ function ResumenInner() {
             {formatMoney(Number(r.amount), r.currency)}
           </p>
           <p className="truncate text-[9px] leading-tight text-muted-foreground">
+            {r.frequency === "semanal" ? "Cada semana · " : ""}
             {card ? labelFor(card) : "Tarjeta"}
             {onCard ? " · en resumen" : " · se debita"}
           </p>
@@ -479,6 +480,9 @@ function ResumenInner() {
       {services.length > 0 ? (
         <div className="space-y-1.5 pb-4">
           <h2 className="text-xs font-medium">Servicios</h2>
+          <p className="text-[11px] text-muted-foreground">
+            Si se debitan de una tarjeta, también entran en esa tarjeta. Los semanales, todas las semanas del mes.
+          </p>
           <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">{services.map((item) => serviceCard(item))}</div>
         </div>
       ) : null}

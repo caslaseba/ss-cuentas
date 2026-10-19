@@ -1,5 +1,5 @@
 import { isCashMethod } from "@/lib/finance/match";
-import { isCardRecurring } from "@/lib/finance/recurring";
+import { chargeMatchesRecurring, isCardRecurring, recurringVia } from "@/lib/finance/recurring";
 import type { BillingCycle } from "@/lib/finance/settlement";
 import { groupCategory } from "@/lib/finance/style";
 import { inCurrentMonth, monthWallet, shiftMonth } from "@/lib/finance/wallet";
@@ -273,6 +273,85 @@ export function projectedCashTxs(
         source: "recurrente" as const,
       };
     });
+}
+
+function occurrenceDays(frequency: RecurringPayment["frequency"], dueDay: number, lastDay: number) {
+  const anchor = Math.min(28, Math.max(1, dueDay || 1));
+  if (frequency === "semanal") {
+    const days: number[] = [];
+    for (let day = ((anchor - 1) % 7) + 1; day <= lastDay; day += 7) days.push(day);
+    return days;
+  }
+  if (frequency === "anual") return [];
+  return [Math.min(anchor, lastDay)];
+}
+
+/**
+ * Un fijo semanal o mensual que se debita de una tarjeta entra en esa tarjeta
+ * aunque no haya un consumo cargado. Si el consumo ya está, no se duplica.
+ */
+export function projectedCardRecurringTxs(
+  recurring: RecurringPayment[],
+  existing: Transaction[],
+  cards: CreditCard[],
+  cursor: Date,
+  userId: string,
+  fallbackCardId: string | null,
+): Transaction[] {
+  const lastDay = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+  const extra: Transaction[] = [];
+  for (const item of recurring) {
+    if (!isCardRecurring(item)) continue;
+    if (item.frequency === "anual") continue;
+    const via = recurringVia(item);
+    const cardId =
+      (via.cardId && cards.some((card) => card.id === via.cardId) ? via.cardId : null) ?? fallbackCardId;
+    if (!cardId) continue;
+    const days = occurrenceDays(item.frequency, item.due_day, lastDay);
+    const matches = existing.filter(
+      (tx) =>
+        tx.credit_card_id === cardId &&
+        inCurrentMonth(tx.occurred_on, cursor) &&
+        chargeMatchesRecurring(item, tx),
+    );
+    const covered = new Set<number>();
+    const slack = item.frequency === "semanal" ? 3 : 31;
+    for (const tx of matches) {
+      const day = chargeDay(tx.occurred_on);
+      let best = 0;
+      let bestDist = 99;
+      for (const candidate of days) {
+        if (covered.has(candidate)) continue;
+        const dist = Math.abs(candidate - day);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = candidate;
+        }
+      }
+      if (best && bestDist <= slack) covered.add(best);
+    }
+    for (const day of days) {
+      if (covered.has(day)) continue;
+      extra.push({
+        id: `${PROJECTED_FIJO_PREFIX}${item.id}-${monthKey(cursor)}-${day}`,
+        user_id: userId,
+        type: "egreso",
+        amount: Number(item.amount),
+        currency: item.currency,
+        category_id: item.category_id,
+        account_id: null,
+        credit_card_id: cardId,
+        installment_id: null,
+        installment_number: null,
+        concept: item.name,
+        payment_method: "tarjeta_credito",
+        occurred_on: isoDate(new Date(cursor.getFullYear(), cursor.getMonth(), day)),
+        notes: "proyectado",
+        source: "recurrente",
+      });
+    }
+  }
+  return extra;
 }
 
 export function spendOnCard(

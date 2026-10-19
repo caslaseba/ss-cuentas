@@ -5,7 +5,6 @@ import { useFinance } from "@/components/providers/finance-provider";
 import { householdCards } from "@/lib/finance/cards";
 import {
   cycleSourceCard,
-  familyCardIds,
   getBillingCycle,
   inCycle,
   statementRefForMonth,
@@ -19,6 +18,7 @@ import {
   cashMonthSpend,
   cursorFromMes,
   isOnOrBeforeClose,
+  projectedCardRecurringTxs,
   projectedCashTxs,
   projectedInstallmentTxs,
   spendOnCard,
@@ -59,10 +59,7 @@ export function useMonthView(initial?: Date) {
   const monthStatement =
     mine && profile ? summarizeCard(mine, transactions, installments, profile, cards, cardRef) : null;
 
-  const cardIds = new Set([
-    ...(mine ? familyCardIds(mine, cards) : []),
-    ...(papa ? [papa.id] : []),
-  ]);
+  const cardIds = new Set(cards.map((card) => card.id));
   const cycleCard = mine
     ? cycleSourceCard(mine, cards)
     : papa
@@ -88,6 +85,7 @@ export function useMonthView(initial?: Date) {
   const openCardTx = uniqueById([
     ...cardChargesInMonth(transactions, cursor, cardIds),
     ...projectFor(cursor),
+    ...projectedCardRecurringTxs(recurring, transactions, cards, cursor, profile?.id ?? "", mine?.id ?? null),
   ]);
   const prevMonth = shiftMonth(cursor, -1);
   const prevPool = uniqueById([

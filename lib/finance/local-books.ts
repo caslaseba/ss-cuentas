@@ -208,6 +208,15 @@ export function localSeed(): FinanceSnapshot {
       category_id: "cat-ocio",
       account_id: "acc-mp",
     }),
+    tx("tx-yt", {
+      type: "egreso",
+      amount: 2500,
+      concept: "YouTube",
+      payment_method: "tarjeta_credito",
+      occurred_on: dayOfMonth(11),
+      category_id: "cat-ocio",
+      credit_card_id: "card-visa",
+    }),
   ];
 
   const recurring: RecurringPayment[] = [
@@ -280,6 +289,34 @@ export function localSeed(): FinanceSnapshot {
       category_id: "cat-serv",
       account_id: "acc-icbc",
       notes: null,
+    },
+    {
+      id: "rec-yt",
+      user_id: LOCAL_USER_ID,
+      name: "YouTube",
+      amount: 2500,
+      currency: "ARS",
+      frequency: "semanal",
+      due_day: 4,
+      is_paid: false,
+      paid_month: null,
+      category_id: "cat-ocio",
+      account_id: null,
+      notes: "via:tarjeta:card-visa",
+    },
+    {
+      id: "rec-disney",
+      user_id: LOCAL_USER_ID,
+      name: "Disney",
+      amount: 9000,
+      currency: "ARS",
+      frequency: "mensual",
+      due_day: 1,
+      is_paid: false,
+      paid_month: null,
+      category_id: "cat-ocio",
+      account_id: null,
+      notes: "via:tarjeta:card-papa",
     },
   ];
 

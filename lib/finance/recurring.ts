@@ -51,6 +51,19 @@ function norm(text: string) {
     .trim();
 }
 
+export function chargeMatchesRecurring(
+  item: Pick<RecurringPayment, "name">,
+  tx: Pick<Transaction, "concept" | "type" | "payment_method">,
+) {
+  if (tx.type !== "egreso" || tx.payment_method !== "tarjeta_credito") return false;
+  const needle = norm(cleanConceptName(item.name));
+  const concept = norm(cleanConceptName(tx.concept));
+  if (!needle || !concept) return false;
+  if (concept === needle || concept.includes(needle) || needle.includes(concept)) return true;
+  const words = needle.split(" ").filter((w) => w.length >= 4);
+  return words.length > 0 && words.every((w) => concept.includes(w));
+}
+
 export function cardCoversRecurring(
   item: RecurringPayment,
   transactions: Transaction[],
@@ -58,14 +71,10 @@ export function cardCoversRecurring(
 ) {
   const via = recurringVia(item);
   if (!via.onCard) return false;
-  const needle = norm(item.name);
-  const words = needle.split(" ").filter((w) => w.length >= 4);
   return transactions.some((t) => {
-    if (t.type !== "egreso" || t.payment_method !== "tarjeta_credito") return false;
+    if (!chargeMatchesRecurring(item, t)) return false;
     if (!inCurrentMonth(t.occurred_on, ref)) return false;
     if (via.cardId && t.credit_card_id && t.credit_card_id !== via.cardId) return false;
-    const concept = norm(t.concept);
-    if (concept.includes(needle) || needle.includes(concept)) return true;
-    return words.some((w) => concept.includes(w));
+    return true;
   });
 }
