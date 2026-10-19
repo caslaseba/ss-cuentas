@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { Suspense, useEffect, useState, type FormEvent } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
@@ -10,7 +9,6 @@ import { toast } from "sonner";
 import { PinGate } from "@/components/entry/pin-gate";
 import { TransactionEdit } from "@/components/entry/transaction-edit";
 import { RecurringEdit } from "@/components/entry/recurring-edit";
-import { MonthMoves } from "@/components/dashboard/month-moves";
 import { MovementRow } from "@/components/dashboard/movement-row";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -19,14 +17,12 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
-import { cashRecurringPaid, categoryOriginSplit, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
+import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
 import { cardCoversRecurring, recurringVia } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
-import { spendOnCard } from "@/lib/finance/month-view";
-import { dueAfterClosing, statementRefForMonth } from "@/lib/finance/settlement";
 import { cn, formatMoney, isoDate, monthKey } from "@/lib/utils";
-import type { PaymentMethod, RecurringPayment, Transaction } from "@/lib/types";
+import type { CreditCard, PaymentMethod, RecurringPayment, Transaction } from "@/lib/types";
 
 export default function ResumenPage() {
   return (
@@ -63,31 +59,13 @@ function ResumenInner() {
     mine,
     papa,
     toArs,
-    cashMoves,
-    openCardTx,
     monthMoves,
-    tarjetaAbierta,
-    visaMia,
-    visaPapa,
-    closingDay,
-    billBefore,
-    billAfter,
-    billMine,
-    sumsNext,
-    sumsLater,
-    updateCard,
-    quedaSiPagaVisa,
   } = view;
   const { unlocked, askPin, pinError, guard, submitPin, closePin } = useEditGate();
   const canEdit = !isPast || unlocked;
   const [hideSueldo, setHideSueldo] = useState(true);
   const [openCats, setOpenCats] = useState<string[]>([]);
-  const [closeDay, setCloseDay] = useState(String(closingDay));
-  const [savingClose, setSavingClose] = useState(false);
-
-  useEffect(() => {
-    setCloseDay(String(closingDay));
-  }, [closingDay]);
+  const [source, setSource] = useState("todas");
 
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [editingFixed, setEditingFixed] = useState<RecurringPayment | null>(null);
@@ -96,23 +74,78 @@ function ResumenInner() {
   const [payMethod, setPayMethod] = useState<PaymentMethod>("transferencia");
   const [unpayAsk, setUnpayAsk] = useState<RecurringPayment | null>(null);
 
-  const mes = monthKey(cursor);
-  const closeDate = mine ? statementRefForMonth(mine, cursor) : null;
-  const dueDate = mine && closeDate ? dueAfterClosing(mine, closeDate) : null;
-  const prevName = format(shiftMonth(cursor, -1), "MMMM", { locale: es });
-  const nextName = format(shiftMonth(cursor, 1), "MMMM", { locale: es });
-  const laterName = format(shiftMonth(cursor, 2), "MMMM", { locale: es });
-  const olderName = format(shiftMonth(cursor, -2), "MMMM", { locale: es });
-  const beforeTotal = billBefore.reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
-  const afterTotal = billAfter.reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
-  const nextTotal = sumsNext.reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
-  const laterTotal = sumsLater.reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
-  const beforeMine = spendOnCard(billBefore, mine?.id ?? null, toArs);
-  const beforePapa = spendOnCard(billBefore, papa?.id ?? null, toArs);
-  const closeLabel = closeDate ? format(closeDate, "d/M") : null;
-  const dueLabel = dueDate ? format(dueDate, "d/M") : null;
-  const cats = categoryOriginSplit(cashMoves, openCardTx, categories, mine?.id ?? null, papa?.id ?? null, toArs);
   const services = [...recurring].sort((a, b) => a.name.localeCompare(b.name, "es"));
+
+  function labelFor(card: CreditCard) {
+    if (mine && card.id === mine.id) return "Mi tarjeta";
+    if (papa && card.id === papa.id) return "Extensión";
+    if (card.kind === "extension") return card.name;
+    return card.name;
+  }
+
+  function sourceOf(tx: Transaction) {
+    if (tx.payment_method !== "tarjeta_credito") return { id: "plata", label: "Plata" };
+    const card = cards.find((item) => item.id === tx.credit_card_id);
+    if (!card) return { id: tx.credit_card_id || "otra", label: "Otra tarjeta" };
+    return { id: card.id, label: labelFor(card) };
+  }
+
+  const chipCards = [
+    ...(mine ? [mine] : []),
+    ...(papa && papa.id !== mine?.id ? [papa] : []),
+    ...cards.filter((card) => card.id !== mine?.id && card.id !== papa?.id),
+  ];
+
+  function spendOf(id: string) {
+    return monthMoves
+      .filter((tx) => tx.type === "egreso" && sourceOf(tx).id === id)
+      .reduce((sum, tx) => sum + toArs(Number(tx.amount), tx.currency), 0);
+  }
+
+  const filteredMoves = monthMoves.filter((tx) => source === "todas" || sourceOf(tx).id === source);
+
+  const categoryRows = (() => {
+    const buckets = new Map<string, { name: string; total: number; ingreso: number; txs: Transaction[] }>();
+    for (const tx of filteredMoves) {
+      const raw = categories.find((item) => item.id === tx.category_id)?.name ?? (tx.type === "ingreso" ? "Ingresos" : "Sin categoría");
+      const name = groupCategory(raw);
+      const row = buckets.get(name) ?? { name, total: 0, ingreso: 0, txs: [] };
+      const amount = toArs(Number(tx.amount), tx.currency);
+      if (tx.type === "ingreso") row.ingreso += amount;
+      else row.total += amount;
+      row.txs.push(tx);
+      buckets.set(name, row);
+    }
+    return [...buckets.values()].sort((a, b) => Math.max(b.total, b.ingreso) - Math.max(a.total, a.ingreso));
+  })();
+
+  function splitLine(txs: Transaction[]) {
+    const sums = new Map<string, { label: string; amount: number; order: number }>();
+    for (const tx of txs) {
+      if (tx.type === "ingreso") continue;
+      const src = sourceOf(tx);
+      const order = src.id === mine?.id ? 0 : src.id === papa?.id ? 1 : src.id === "plata" ? 9 : 2;
+      const current = sums.get(src.id) ?? { label: src.label, amount: 0, order };
+      current.amount += toArs(Number(tx.amount), tx.currency);
+      sums.set(src.id, current);
+    }
+    return [...sums.values()]
+      .filter((item) => item.amount > 0)
+      .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, "es"))
+      .map((item) => `${item.label} ${formatMoney(item.amount, "ARS")}`);
+  }
+
+  function groupsFor(txs: Transaction[]) {
+    const groups = new Map<string, { label: string; order: number; txs: Transaction[] }>();
+    for (const tx of txs) {
+      const src = sourceOf(tx);
+      const order = src.id === mine?.id ? 0 : src.id === papa?.id ? 1 : src.id === "plata" ? 9 : 2;
+      const group = groups.get(src.id) ?? { label: src.label, order, txs: [] };
+      group.txs.push(tx);
+      groups.set(src.id, group);
+    }
+    return [...groups.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, "es"));
+  }
 
   const linkedPay = (r: RecurringPayment) =>
     transactions.find(
@@ -134,19 +167,6 @@ function ResumenInner() {
     return current.includes(name) ? current.filter((item) => item !== name) : [...current, name];
   }
 
-  function movesFor(name: string) {
-    const papaId = papa?.id ?? null;
-    const matched = monthMoves.filter((t) => {
-      const raw = categories.find((c) => c.id === t.category_id)?.name ?? "Sin categoría";
-      return groupCategory(raw) === name;
-    });
-    return {
-      plata: matched.filter((t) => t.payment_method !== "tarjeta_credito"),
-      mia: matched.filter((t) => t.payment_method === "tarjeta_credito" && t.credit_card_id !== papaId),
-      extension: matched.filter((t) => Boolean(papaId) && t.credit_card_id === papaId),
-    };
-  }
-
   function selectTx(tx: Transaction) {
     if (isProjectedTx(tx)) {
       toast.message("Es una proyección: todavía no se debitó.");
@@ -163,7 +183,7 @@ function ResumenInner() {
     const via = recurringVia(r);
     if (via.onCard) {
       const onCard = cardCoversRecurring(r, transactions, cursor);
-      const extension = Boolean(papa && via.cardId === papa.id);
+      const card = cards.find((item) => item.id === via.cardId) ?? (via.cardId === papa?.id ? papa : mine);
       return (
         <button
           key={r.id}
@@ -176,7 +196,7 @@ function ResumenInner() {
             {formatMoney(Number(r.amount), r.currency)}
           </p>
           <p className="truncate text-[9px] leading-tight text-muted-foreground">
-            {extension ? "Extensión" : "Mi tarjeta"}
+            {card ? labelFor(card) : "Tarjeta"}
             {onCard ? " · en resumen" : " · se debita"}
           </p>
         </button>
@@ -268,21 +288,6 @@ function ResumenInner() {
     }
   }
 
-  async function saveClose(event: FormEvent) {
-    event.preventDefault();
-    if (!mine) return;
-    const day = Math.min(28, Math.max(1, Number(closeDay) || closingDay));
-    setSavingClose(true);
-    try {
-      await updateCard(mine.id, { closing_day: day, due_day: mine.due_day });
-      toast.success(`Cierre guardado: día ${day}`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "No se pudo guardar el cierre");
-    } finally {
-      setSavingClose(false);
-    }
-  }
-
   async function bringLeftover() {
     if (!leftover || alreadyCarried || !canEdit) return;
     try {
@@ -345,67 +350,6 @@ function ResumenInner() {
             {hideSueldo ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
           </Button>
         </div>
-        {billMine > 0 ? (
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Si pagás el resumen que llegó ({formatMoney(billMine, "ARS")}), te quedarían {formatMoney(quedaSiPagaVisa, "ARS")}
-          </p>
-        ) : null}
-      </div>
-
-      <div className="rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-2">
-        <p className="text-[11px] font-medium text-violet-950 dark:text-violet-100">
-          En {prevName}, antes del cierre
-        </p>
-        {papa ? (
-          <div className="mt-1 grid grid-cols-2 gap-1">
-            <div>
-              <p className="text-[10px] text-violet-900/80 dark:text-violet-100/80">Mi tarjeta</p>
-              <p className="text-sm font-semibold tabular-nums text-violet-950 dark:text-violet-50">
-                {formatMoney(beforeMine, "ARS")}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] text-fuchsia-900/80 dark:text-fuchsia-100/80">Extensión</p>
-              <p className="text-sm font-semibold tabular-nums text-fuchsia-950 dark:text-fuchsia-50">
-                {formatMoney(beforePapa, "ARS")}
-              </p>
-            </div>
-          </div>
-        ) : (
-          <p className="text-sm font-semibold tabular-nums text-violet-950 dark:text-violet-50">
-            {formatMoney(beforeTotal, "ARS")}
-          </p>
-        )}
-        <p className="text-[10px] leading-tight text-violet-900/80 dark:text-violet-100/80">
-          {papa ? `Juntas ${formatMoney(beforeTotal, "ARS")}. ` : ""}
-          Eso se suma en este mes.
-        </p>
-        {afterTotal > 0 ? (
-          <p className="mt-1 text-[10px] leading-tight text-violet-900/80 dark:text-violet-100/80">
-            De {olderName}, después del cierre: {formatMoney(afterTotal, "ARS")}. También entra en este mes.
-          </p>
-        ) : null}
-        <p className="mt-1 text-[10px] leading-tight text-muted-foreground">
-          Lo que cargás ahora se ve en este mes.
-          {nextTotal > 0 ? ` ${formatMoney(nextTotal, "ARS")} de antes del día ${closingDay} se suma en ${nextName}.` : ""}
-          {laterTotal > 0 ? ` ${formatMoney(laterTotal, "ARS")} de después del cierre se suma en ${laterName}.` : ""}
-        </p>
-        {mine ? (
-          <form className="mt-2 flex items-end gap-2" onSubmit={(e) => void saveClose(e)}>
-            <label className="min-w-0 flex-1 text-[10px] text-muted-foreground">
-              Día de cierre
-              <Input
-                className="mt-1 h-8"
-                inputMode="numeric"
-                value={closeDay}
-                onChange={(e) => setCloseDay(e.target.value)}
-              />
-            </label>
-            <Button type="submit" size="sm" className="h-8 px-2 text-xs" disabled={savingClose}>
-              Guardar cierre
-            </Button>
-          </form>
-        ) : null}
       </div>
 
       {isPast && !unlocked ? (
@@ -436,103 +380,83 @@ function ResumenInner() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-1">
-        <Link
-          href={`/resumen/origen/plata?mes=${mes}`}
-          className="rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-1 text-left"
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onClick={() => setSource("todas")}
+          className={cn(
+            "shrink-0 rounded-full border px-3 py-1 text-xs font-medium",
+            source === "todas" ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground",
+          )}
         >
-          <p className="truncate text-[11px] font-medium leading-tight text-amber-800 dark:text-amber-200">Mi sueldo</p>
-          <p className="text-[11px] font-semibold leading-tight tabular-nums text-amber-950 dark:text-amber-100">
-            {hideSueldo ? "••••" : formatMoney(wallet.gastadoContado, "ARS")}
-          </p>
-        </Link>
-        <Link
-          href={`/resumen/origen/visa?mes=${mes}`}
-          className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1 text-left"
-        >
-          <p className="truncate text-[11px] font-medium leading-tight text-violet-800 dark:text-violet-200">Mi tarjeta</p>
-          <p className="text-[11px] font-semibold leading-tight tabular-nums text-violet-950 dark:text-violet-100">
-            {formatMoney(visaMia, "ARS")}
-          </p>
-          <p className="truncate text-[9px] leading-tight text-muted-foreground">
-            este mes
-            {closeLabel ? ` · cierra ${closeLabel}` : ""}
-          </p>
-        </Link>
-        {papa ? (
-          <Link
-            href={`/resumen/origen/papa?mes=${mes}`}
-            className="rounded-md border border-fuchsia-500/30 bg-fuchsia-500/10 px-1.5 py-1 text-left"
+          Todas
+        </button>
+        {chipCards.map((card) => (
+          <button
+            key={card.id}
+            type="button"
+            onClick={() => setSource(card.id)}
+            className={cn(
+              "shrink-0 rounded-full border px-3 py-1 text-xs font-medium",
+              source === card.id ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground",
+            )}
           >
-            <p className="truncate text-[11px] font-medium leading-tight text-fuchsia-800 dark:text-fuchsia-200">Extensión</p>
-            <p className="text-[11px] font-semibold leading-tight tabular-nums text-fuchsia-950 dark:text-fuchsia-100">
-              {formatMoney(visaPapa, "ARS")}
-            </p>
-            <p className="truncate text-[9px] leading-tight text-muted-foreground">
-              papá · este mes
-              {closeLabel ? ` · cierra ${closeLabel}` : ""}
-            </p>
-          </Link>
-        ) : null}
-        {papa ? (
-          <div className="rounded-md border border-border bg-muted/40 px-1.5 py-1 text-left">
-            <p className="truncate text-[11px] font-medium leading-tight">Juntas</p>
-            <p className="text-[11px] font-semibold leading-tight tabular-nums">{formatMoney(tarjetaAbierta, "ARS")}</p>
-            <p className="truncate text-[9px] leading-tight text-muted-foreground">
-              mi tarjeta y la extensión van aparte
-              {dueLabel ? ` · vence ${dueLabel}` : ""}
-            </p>
-          </div>
-        ) : null}
+            {labelFor(card)} {formatMoney(spendOf(card.id), "ARS")}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => setSource("plata")}
+          className={cn(
+            "shrink-0 rounded-full border px-3 py-1 text-xs font-medium",
+            source === "plata" ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground",
+          )}
+        >
+          Plata {formatMoney(spendOf("plata"), "ARS")}
+        </button>
       </div>
 
-      {cats.length > 0 ? (
+      {categoryRows.length > 0 ? (
         <div className="space-y-1.5">
-          <h2 className="text-xs font-medium">Por categoría</h2>
-          <div className="grid grid-cols-3 gap-1">
-            {cats.map((row) => {
+          <h2 className="text-xs font-medium">Categorías</h2>
+          <div className="space-y-1">
+            {categoryRows.map((row) => {
               const open = openCats.includes(row.name);
-              const moves = open ? movesFor(row.name) : null;
-              const parts = [
-                row.ingreso > 0 ? `Entró ${formatMoney(row.ingreso, "ARS")}` : null,
-                row.sueldo > 0 ? `Sueldo ${formatMoney(row.sueldo, "ARS")}` : null,
-                row.visa > 0 ? `Mía ${formatMoney(row.visa, "ARS")}` : null,
-                row.papa > 0 ? `Ext. ${formatMoney(row.papa, "ARS")}` : null,
-              ].filter(Boolean);
+              const parts = source === "todas" ? splitLine(row.txs) : [];
+              const groups = open ? groupsFor(row.txs) : [];
               return (
-                <div key={row.name} className={open ? "col-span-3" : ""}>
+                <div key={row.name}>
                   <button
                     type="button"
                     aria-expanded={open}
                     onClick={() => setOpenCats((current) => toggleName(current, row.name))}
                     className={cn(
-                      "flex w-full items-start justify-between gap-1 rounded-md border px-1.5 py-1 text-left",
+                      "flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-left",
                       categoryChipClass(groupCategory(row.name)),
                     )}
                   >
                     <span className="min-w-0">
-                      <span className="block truncate text-[11px] font-medium leading-tight">{row.name}</span>
-                      <span className="block text-[11px] font-semibold leading-tight tabular-nums">
-                        {row.total > 0 ? formatMoney(row.total, "ARS") : row.ingreso > 0 ? `+${formatMoney(row.ingreso, "ARS")}` : formatMoney(0, "ARS")}
-                      </span>
-                      <span className="block truncate text-[9px] leading-tight text-muted-foreground">
-                        {parts.join(" · ") || "—"}
-                      </span>
+                      <span className="block truncate text-sm font-medium leading-tight">{row.name}</span>
+                      {parts.length > 0 ? (
+                        <span className="block truncate text-[11px] leading-tight text-muted-foreground">{parts.join(" · ")}</span>
+                      ) : null}
                     </span>
-                    {open ? <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                    <span className="flex shrink-0 items-center gap-1 text-sm font-semibold tabular-nums">
+                      {row.ingreso > 0 && row.total === 0
+                        ? `+${formatMoney(row.ingreso, "ARS")}`
+                        : formatMoney(row.total, "ARS")}
+                      {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                    </span>
                   </button>
-                  {open && moves ? (
+                  {open ? (
                     <div className="mt-1 space-y-2 rounded-md border border-border bg-background p-1.5">
-                      {moves.plata.length === 0 && moves.mia.length === 0 && moves.extension.length === 0 ? (
-                        <p className="text-[11px] text-muted-foreground">Nada de esta categoría en este mes.</p>
-                      ) : null}
-                      {moves.plata.length > 0 ? (
-                        <div className="space-y-1">
-                          <p className="text-[10px] font-medium text-muted-foreground">En plata</p>
-                          {moves.plata.map((t) => (
+                      {groups.map((group) => (
+                        <div key={group.label} className="space-y-1">
+                          <p className="text-[10px] font-medium text-muted-foreground">{group.label}</p>
+                          {group.txs.map((tx) => (
                             <MovementRow
-                              key={t.id}
-                              tx={t}
+                              key={tx.id}
+                              tx={tx}
                               categories={categories}
                               cards={cards}
                               installments={installments}
@@ -540,37 +464,7 @@ function ResumenInner() {
                             />
                           ))}
                         </div>
-                      ) : null}
-                      {moves.mia.length > 0 ? (
-                        <div className="space-y-1">
-                          <p className="text-[10px] font-medium text-violet-800 dark:text-violet-200">Mi tarjeta</p>
-                          {moves.mia.map((t) => (
-                            <MovementRow
-                              key={t.id}
-                              tx={t}
-                              categories={categories}
-                              cards={cards}
-                              installments={installments}
-                              onSelect={selectTx}
-                            />
-                          ))}
-                        </div>
-                      ) : null}
-                      {moves.extension.length > 0 ? (
-                        <div className="space-y-1">
-                          <p className="text-[10px] font-medium text-fuchsia-800 dark:text-fuchsia-200">Extensión</p>
-                          {moves.extension.map((t) => (
-                            <MovementRow
-                              key={t.id}
-                              tx={t}
-                              categories={categories}
-                              cards={cards}
-                              installments={installments}
-                              onSelect={selectTx}
-                            />
-                          ))}
-                        </div>
-                      ) : null}
+                      ))}
                     </div>
                   ) : null}
                 </div>
@@ -578,34 +472,16 @@ function ResumenInner() {
             })}
           </div>
         </div>
-      ) : null}
+      ) : (
+        <p className="text-sm text-muted-foreground">Nada en este mes para ese filtro.</p>
+      )}
 
       {services.length > 0 ? (
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 pb-4">
           <h2 className="text-xs font-medium">Servicios</h2>
-          <p className="text-[11px] text-muted-foreground">
-            Gastos de cada mes, como luz, gas o YouTube. Las cuotas no entran acá.
-          </p>
           <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">{services.map((item) => serviceCard(item))}</div>
         </div>
       ) : null}
-
-      <div className="space-y-1.5 pb-4">
-        <h2 className="text-xs font-medium">Cada movimiento</h2>
-        <p className="text-[11px] text-muted-foreground">
-          {isFuture
-            ? "Cuotas y fijos que se van a descontar."
-            : "Orden A-Z. Filtrá por tipo, valor o categoría. Plata ahora no es lo de la tarjeta."}
-        </p>
-        <MonthMoves
-          transactions={monthMoves}
-          categories={categories}
-          cards={cards}
-          installments={installments}
-          toArs={toArs}
-          onSelect={selectTx}
-        />
-      </div>
 
       <TransactionEdit tx={editing} open={Boolean(editing)} onOpenChange={(v) => !v && setEditing(null)} />
       <RecurringEdit item={editingFixed} open={Boolean(editingFixed)} onOpenChange={(v) => !v && setEditingFixed(null)} />
