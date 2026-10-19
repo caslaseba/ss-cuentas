@@ -20,7 +20,7 @@ import { Select } from "@/components/ui/select";
 import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
 import { cashRecurringPaid, categoryOriginSplit, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
-import { cardCoversRecurring, recurringVia, servicesBySubcategory } from "@/lib/finance/recurring";
+import { cardCoversRecurring, recurringVia } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
 import { spendOnCard } from "@/lib/finance/month-view";
@@ -82,7 +82,6 @@ function ResumenInner() {
   const canEdit = !isPast || unlocked;
   const [hideSueldo, setHideSueldo] = useState(true);
   const [openCats, setOpenCats] = useState<string[]>([]);
-  const [openSubs, setOpenSubs] = useState<string[]>([]);
   const [closeDay, setCloseDay] = useState(String(closingDay));
   const [savingClose, setSavingClose] = useState(false);
 
@@ -113,7 +112,7 @@ function ResumenInner() {
   const closeLabel = closeDate ? format(closeDate, "d/M") : null;
   const dueLabel = dueDate ? format(dueDate, "d/M") : null;
   const cats = categoryOriginSplit(cashMoves, openCardTx, categories, mine?.id ?? null, papa?.id ?? null, toArs);
-  const serviceGroups = servicesBySubcategory(recurring);
+  const services = [...recurring].sort((a, b) => a.name.localeCompare(b.name, "es"));
 
   const linkedPay = (r: RecurringPayment) =>
     transactions.find(
@@ -581,38 +580,13 @@ function ResumenInner() {
         </div>
       ) : null}
 
-      {serviceGroups.length > 0 ? (
+      {services.length > 0 ? (
         <div className="space-y-1.5">
           <h2 className="text-xs font-medium">Servicios</h2>
           <p className="text-[11px] text-muted-foreground">
             Gastos de cada mes, como luz, gas o YouTube. Las cuotas no entran acá.
           </p>
-          {serviceGroups.map((group) => {
-            const open = openSubs.includes(group.sub);
-            const sum = group.items.reduce((total, item) => total + toArs(Number(item.amount), item.currency), 0);
-            return (
-              <div key={group.sub} className="space-y-1">
-                <button
-                  type="button"
-                  aria-expanded={open}
-                  onClick={() => setOpenSubs((current) => toggleName(current, group.sub))}
-                  className="flex w-full items-center justify-between gap-2 rounded-md border border-teal-500/30 bg-teal-500/10 px-2 py-1.5 text-left"
-                >
-                  <span className="min-w-0">
-                    <span className="block text-[11px] font-medium leading-tight">{group.sub}</span>
-                    <span className="block text-[10px] text-muted-foreground">
-                      {group.items.length} {group.items.length === 1 ? "servicio" : "servicios"}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-1 text-[11px] font-semibold tabular-nums">
-                    {formatMoney(sum, "ARS")}
-                    {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                  </span>
-                </button>
-                {open ? <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">{group.items.map((item) => serviceCard(item))}</div> : null}
-              </div>
-            );
-          })}
+          <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">{services.map((item) => serviceCard(item))}</div>
         </div>
       ) : null}
 

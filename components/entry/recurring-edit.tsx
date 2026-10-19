@@ -11,8 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { householdCards } from "@/lib/finance/cards";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
-import { ServiceSubField } from "@/components/entry/service-sub-field";
-import { recurringSubcategory, recurringVia, withRecurringSub, withRecurringVia, type ServiceSubcategory } from "@/lib/finance/recurring";
+import { recurringVia, withRecurringVia } from "@/lib/finance/recurring";
 import { inCurrentMonth } from "@/lib/finance/wallet";
 import type { RecurringPayment } from "@/lib/types";
 
@@ -47,7 +46,6 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
   const [dueDay, setDueDay] = useState(String(item.due_day));
   const [categoryId, setCategoryId] = useState(item.category_id ?? "");
   const [payHow, setPayHow] = useState(via.onCard ? via.cardId || "tarjeta" : "plata");
-  const [serviceSub, setServiceSub] = useState<ServiceSubcategory>(recurringSubcategory(item));
   const [busy, setBusy] = useState(false);
 
   async function save() {
@@ -65,7 +63,7 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
         amount: n,
         due_day: onCard ? 1 : Math.min(28, Math.max(1, Number(dueDay) || 1)),
         category_id: categoryId || null,
-        notes: withRecurringSub(withRecurringVia(item.notes, onCard, onCard ? cardId : null), serviceSub),
+        notes: withRecurringVia(item.notes, onCard, onCard ? cardId : null),
       });
       toast.success("Gasto fijo actualizado");
       onDone();
@@ -124,7 +122,6 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
           </p>
         ) : null}
       </div>
-      <ServiceSubField value={serviceSub} onChange={setServiceSub} />
       <div>
         <Label>Categoría</Label>
         <Select className="mt-1.5" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>

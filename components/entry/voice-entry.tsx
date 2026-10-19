@@ -10,7 +10,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ServiceSubField } from "@/components/entry/service-sub-field";
 import { AmountInput } from "@/components/ui/amount-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +23,6 @@ import { householdCards } from "@/lib/finance/cards";
 import { matchCard, matchCategory, categoryLabel } from "@/lib/finance/match";
 import { describeCategoryChoice } from "@/lib/finance/similar-category";
 import { parseVoiceCommand, parseVoiceCommandBeta } from "@/lib/parsers/voice-parser";
-import { guessServiceSubcategory, withRecurringSub, type ServiceSubcategory } from "@/lib/finance/recurring";
 import { withObservation } from "@/lib/finance/tx-notes";
 import { formatMoney, isoDate } from "@/lib/utils";
 import type { CurrencyCode, PaymentMethod, TransactionType } from "@/lib/types";
@@ -57,7 +55,6 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
   const [cuotas, setCuotas] = useState("");
   const [enCuotas, setEnCuotas] = useState(false);
   const [date, setDate] = useState(isoDate(new Date()));
-  const [serviceSub, setServiceSub] = useState<ServiceSubcategory>("Otro");
   const [observation, setObservation] = useState("");
 
   useEffect(() => {
@@ -77,7 +74,6 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
     }
     const cat = matchCategory(categories, parsed.type, parsed.concept, parsed.categoryHint);
     if (cat) setCategoryId(cat.id);
-    setServiceSub(guessServiceSubcategory(parsed.concept));
     setEdit(parsed.confidence === "baja");
   }, [parsed, cards, categories, transactions]);
 
@@ -131,7 +127,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
           frequency: "mensual",
           due_day: dueDay,
           category_id: resolvedCategoryId,
-          notes: withRecurringSub(null, serviceSub),
+          notes: withObservation(null, observation),
         });
         toast.success("Servicio mensual guardado");
         setOpen(false);
@@ -339,12 +335,6 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             <p className="mt-1 text-[11px] text-muted-foreground">Hoy. Cambiala si lo cargás otro día.</p>
           </div>
-          {parsed?.intent === "servicio" ? (
-            <div className="mt-3">
-              <ServiceSubField value={serviceSub} onChange={setServiceSub} />
-            </div>
-          ) : null}
-
           <Textarea
             className="mt-3 min-h-16"
             value={observation}

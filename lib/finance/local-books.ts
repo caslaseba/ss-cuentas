@@ -223,7 +223,7 @@ export function localSeed(): FinanceSnapshot {
       paid_month: null,
       category_id: "cat-ocio",
       account_id: "acc-icbc",
-      notes: "sub:Suscripción",
+      notes: null,
     },
     {
       id: "rec-spotify",
@@ -237,7 +237,7 @@ export function localSeed(): FinanceSnapshot {
       paid_month: `${monthKey()}-01`,
       category_id: "cat-ocio",
       account_id: "acc-icbc",
-      notes: "sub:Suscripción",
+      notes: null,
     },
     {
       id: "rec-osde",
@@ -251,7 +251,7 @@ export function localSeed(): FinanceSnapshot {
       paid_month: null,
       category_id: "cat-salud",
       account_id: "acc-icbc",
-      notes: "sub:Seguro",
+      notes: null,
     },
     {
       id: "rec-edenor",
@@ -265,7 +265,7 @@ export function localSeed(): FinanceSnapshot {
       paid_month: `${monthKey()}-01`,
       category_id: "cat-serv",
       account_id: "acc-icbc",
-      notes: "sub:Hogar",
+      notes: null,
     },
     {
       id: "rec-abl",
@@ -279,7 +279,7 @@ export function localSeed(): FinanceSnapshot {
       paid_month: null,
       category_id: "cat-serv",
       account_id: "acc-icbc",
-      notes: "sub:Impuestos",
+      notes: null,
     },
   ];
 

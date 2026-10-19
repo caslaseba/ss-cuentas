@@ -20,8 +20,6 @@ import {
   cleanConceptName,
   findRecurringByName,
   isCardRecurring,
-  recurringSubcategory,
-  withRecurringSub,
   withRecurringVia,
 } from "@/lib/finance/recurring";
 import { withTimeout } from "@/lib/async";
@@ -1115,10 +1113,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     const cleaned = cleanConceptName(input.name);
     if (!cleaned) return;
     const existing = findRecurringByName(recurring, input.matchName ?? cleaned);
-    const notes = withRecurringSub(
-      withRecurringVia(existing?.notes, true, input.credit_card_id),
-      recurringSubcategory({ notes: existing?.notes ?? null, name: cleaned }),
-    );
+    const notes = withRecurringVia(existing?.notes, true, input.credit_card_id);
     if (existing) {
       await updateRecurring(existing.id, {
         name: cleaned,

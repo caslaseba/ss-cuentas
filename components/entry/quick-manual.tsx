@@ -8,14 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CategorySuggest } from "@/components/entry/category-suggest";
-import { ServiceSubField } from "@/components/entry/service-sub-field";
 import { useEdition } from "@/components/providers/edition-provider";
 import { useFinance } from "@/components/providers/finance-provider";
 import { householdCards } from "@/lib/finance/cards";
 import { matchCategory } from "@/lib/finance/match";
 import { describeCategoryChoice } from "@/lib/finance/similar-category";
 import { parseAmountInput } from "@/lib/finance/amount";
-import { guessServiceSubcategory, withRecurringSub, type ServiceSubcategory } from "@/lib/finance/recurring";
 import { withObservation } from "@/lib/finance/tx-notes";
 import { addMonths, usdToLocal } from "@/lib/finance/settlement";
 import { format } from "date-fns";
@@ -54,8 +52,6 @@ export function QuickManual() {
   const [asFixed, setAsFixed] = useState(false);
   const [observation, setObservation] = useState("");
   const [occurredOn, setOccurredOn] = useState(isoDate(new Date()));
-  const [serviceSub, setServiceSub] = useState<ServiceSubcategory>("Otro");
-  const [subTouched, setSubTouched] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -161,7 +157,7 @@ export function QuickManual() {
           frequency: "mensual",
           due_day: Math.min(28, chargeDate.getDate() || 1),
           category_id: cat?.id ?? null,
-          notes: withRecurringSub(null, serviceSub),
+          notes: withObservation(null, observation),
         });
         toast.success("Servicio mensual guardado");
         setConcept("");
@@ -170,7 +166,6 @@ export function QuickManual() {
         setCategoryName("");
         setObservation("");
         setOccurredOn(isoDate(new Date()));
-        setSubTouched(false);
         focusConcept();
         return;
       }
@@ -249,13 +244,7 @@ export function QuickManual() {
           <button
             key={id}
             type="button"
-            onClick={() => {
-              setMode(id);
-              if (id === "servicio") {
-                setSubTouched(false);
-                setServiceSub(guessServiceSubcategory(concept));
-              }
-            }}
+            onClick={() => setMode(id)}
             className={`rounded-xl px-1 py-2 text-xs font-medium ${
               mode === id
                 ? id === "ingreso"
@@ -290,11 +279,7 @@ export function QuickManual() {
       <Input
         ref={conceptRef}
         value={concept}
-        onChange={(e) => {
-          const value = e.target.value;
-          setConcept(value);
-          if (mode === "servicio" && !subTouched) setServiceSub(guessServiceSubcategory(value));
-        }}
+        onChange={(e) => setConcept(e.target.value)}
         placeholder={
           mode === "servicio" ? "Netflix, luz, internet…" : mode === "ingreso" ? "Cumpleaños, sueldo…" : "Milanesa, cigarrillos, asado…"
         }
@@ -339,15 +324,6 @@ export function QuickManual() {
           ))}
         </Select>
       )}
-      {mode === "servicio" ? (
-        <ServiceSubField
-          value={serviceSub}
-          onChange={(value) => {
-            setSubTouched(true);
-            setServiceSub(value);
-          }}
-        />
-      ) : null}
       {mode === "tarjeta" ? (
         <>
           <Select value={cardId} onChange={(e) => setCardId(e.target.value)}>

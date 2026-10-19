@@ -4,7 +4,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { RecurringEdit } from "@/components/entry/recurring-edit";
 import { CategorySuggest } from "@/components/entry/category-suggest";
-import { ServiceSubField } from "@/components/entry/service-sub-field";
 import { useEdition } from "@/components/providers/edition-provider";
 import { useFinance } from "@/components/providers/finance-provider";
 import { Button } from "@/components/ui/button";
@@ -13,14 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { householdCards } from "@/lib/finance/cards";
 import { parseAmountInput } from "@/lib/finance/amount";
-import {
-  guessServiceSubcategory,
-  isCardRecurring,
-  recurringSubcategory,
-  withRecurringSub,
-  withRecurringVia,
-  type ServiceSubcategory,
-} from "@/lib/finance/recurring";
+import { isCardRecurring, withRecurringVia } from "@/lib/finance/recurring";
 import { describeCategoryChoice } from "@/lib/finance/similar-category";
 import { formatMoney } from "@/lib/utils";
 import type { RecurringPayment } from "@/lib/types";
@@ -34,8 +26,6 @@ export function RecurringPanel() {
   const [fixedDay, setFixedDay] = useState("10");
   const [fixedPay, setFixedPay] = useState("plata");
   const [categoryName, setCategoryName] = useState("");
-  const [serviceSub, setServiceSub] = useState<ServiceSubcategory>("Otro");
-  const [subTouched, setSubTouched] = useState(false);
   const [editing, setEditing] = useState<RecurringPayment | null>(null);
 
   return (
@@ -45,7 +35,9 @@ export function RecurringPanel() {
       ) : (
         <p className="text-xs text-muted-foreground">Tocá uno para cambiar el monto, si se debita de la Visa, o borrarlo.</p>
       )}
-      {recurring.map((item) => (
+      {recurring.map((item) => {
+        const categoryNameForItem = categories.find((c) => c.id === item.category_id)?.name;
+        return (
         <button
           key={item.id}
           type="button"
@@ -55,13 +47,14 @@ export function RecurringPanel() {
           <span className="min-w-0">
             {item.name}{" "}
             <span className="text-muted-foreground">
-              · {recurringSubcategory(item)}
+              {categoryNameForItem ? `· ${categoryNameForItem}` : ""}
               {isCardRecurring(item) ? " · se debita con la Visa" : ` · día ${item.due_day}${item.is_paid ? " · pagado" : ""}`}
             </span>
           </span>
           <span className="shrink-0 font-medium">{formatMoney(Number(item.amount), item.currency)}</span>
         </button>
-      ))}
+        );
+      })}
       <form
         className="grid grid-cols-3 gap-2"
         onSubmit={(event) => {
@@ -85,13 +78,10 @@ export function RecurringPanel() {
               due_day: fixedPay === "plata" ? Number(fixedDay) || 10 : 1,
               frequency: "mensual",
               category_id: categoryId,
-              notes: withRecurringSub(
-                withRecurringVia(
-                  null,
-                  fixedPay !== "plata",
-                  fixedPay !== "plata" && fixedPay !== "tarjeta" ? fixedPay : visible[0]?.id ?? null,
-                ),
-                serviceSub,
+              notes: withRecurringVia(
+                null,
+                fixedPay !== "plata",
+                fixedPay !== "plata" && fixedPay !== "tarjeta" ? fixedPay : visible[0]?.id ?? null,
               ),
             });
             toast.success(
@@ -103,19 +93,13 @@ export function RecurringPanel() {
             setFixedAmount("");
             setCategoryName("");
             setFixedPay("plata");
-            setSubTouched(false);
-            setServiceSub("Otro");
           })().catch((err) => toast.error(err instanceof Error ? err.message : "Error"));
         }}
       >
         <Input
           className="col-span-3"
           value={fixedName}
-          onChange={(event) => {
-            const value = event.target.value;
-            setFixedName(value);
-            if (!subTouched) setServiceSub(guessServiceSubcategory(value));
-          }}
+          onChange={(event) => setFixedName(event.target.value)}
           placeholder="Luz, gas, Netflix…"
           required
         />
@@ -130,15 +114,6 @@ export function RecurringPanel() {
             />
           </div>
         ) : null}
-        <div className="col-span-3">
-          <ServiceSubField
-            value={serviceSub}
-            onChange={(value) => {
-              setSubTouched(true);
-              setServiceSub(value);
-            }}
-          />
-        </div>
         <AmountInput value={fixedAmount} onChange={setFixedAmount} placeholder="Monto" required />
         {fixedPay === "plata" ? (
           <label className="block text-[11px] text-muted-foreground">
