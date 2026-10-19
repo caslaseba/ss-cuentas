@@ -8,12 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CategorySuggest } from "@/components/entry/category-suggest";
+import { ServiceSubField } from "@/components/entry/service-sub-field";
 import { useEdition } from "@/components/providers/edition-provider";
 import { useFinance } from "@/components/providers/finance-provider";
 import { householdCards } from "@/lib/finance/cards";
 import { matchCategory } from "@/lib/finance/match";
 import { describeCategoryChoice } from "@/lib/finance/similar-category";
 import { parseAmountInput } from "@/lib/finance/amount";
+import { guessServiceSubcategory, withRecurringSub, type ServiceSubcategory } from "@/lib/finance/recurring";
 import { withObservation } from "@/lib/finance/tx-notes";
 import { addMonths, usdToLocal } from "@/lib/finance/settlement";
 import { format } from "date-fns";
@@ -51,6 +53,9 @@ export function QuickManual() {
   const [currentCuota, setCurrentCuota] = useState("1");
   const [asFixed, setAsFixed] = useState(false);
   const [observation, setObservation] = useState("");
+  const [occurredOn, setOccurredOn] = useState(isoDate(new Date()));
+  const [serviceSub, setServiceSub] = useState<ServiceSubcategory>("Otro");
+  const [subTouched, setSubTouched] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -74,6 +79,11 @@ export function QuickManual() {
     setCategoryName("");
   }, [mode, beta]);
 
+  const chargeDate = (() => {
+    if (!occurredOn) return new Date();
+    const parsed = new Date(`${occurredOn}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  })();
   const cuotaN = enCuotas ? Number(cuotas) : 0;
   const currentN = Math.min(Math.max(Number(currentCuota) || 1, 1), Math.max(cuotaN, 1));
   const remaining = cuotaN >= 2 ? Math.max(0, cuotaN - currentN) : 0;
@@ -149,8 +159,9 @@ export function QuickManual() {
           amount: n,
           currency: txCurrency,
           frequency: "mensual",
-          due_day: Math.min(28, new Date().getDate() || 1),
+          due_day: Math.min(28, chargeDate.getDate() || 1),
           category_id: cat?.id ?? null,
+          notes: withRecurringSub(null, serviceSub),
         });
         toast.success("Servicio mensual guardado");
         setConcept("");
@@ -158,6 +169,8 @@ export function QuickManual() {
         setCategoryId("");
         setCategoryName("");
         setObservation("");
+        setOccurredOn(isoDate(new Date()));
+        setSubTouched(false);
         focusConcept();
         return;
       }
@@ -170,7 +183,7 @@ export function QuickManual() {
           currency: txCurrency,
           credit_card_id: resolvedCard,
           category_id: cat?.id ?? null,
-          occurred_on: isoDate(new Date()),
+          occurred_on: occurredOn || isoDate(new Date()),
           source: "manual",
           notes,
         });
@@ -184,7 +197,7 @@ export function QuickManual() {
           payment_method: method,
           category_id: cat?.id ?? null,
           credit_card_id: mode === "tarjeta" ? resolvedCard : null,
-          occurred_on: isoDate(new Date()),
+          occurred_on: occurredOn || isoDate(new Date()),
           source: "manual",
           notes,
         });
@@ -211,6 +224,7 @@ export function QuickManual() {
       setCurrentCuota("1");
       setAsFixed(false);
       setObservation("");
+      setOccurredOn(isoDate(new Date()));
       focusConcept();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo guardar");
@@ -235,7 +249,13 @@ export function QuickManual() {
           <button
             key={id}
             type="button"
-            onClick={() => setMode(id)}
+            onClick={() => {
+              setMode(id);
+              if (id === "servicio") {
+                setSubTouched(false);
+                setServiceSub(guessServiceSubcategory(concept));
+              }
+            }}
             className={`rounded-xl px-1 py-2 text-xs font-medium ${
               mode === id
                 ? id === "ingreso"
@@ -252,10 +272,29 @@ export function QuickManual() {
           </button>
         ))}
       </div>
+      <label className="block text-[11px] text-muted-foreground">
+        Fecha
+        <Input
+          className="mt-1"
+          type="date"
+          value={occurredOn}
+          onChange={(e) => setOccurredOn(e.target.value)}
+          required
+        />
+      </label>
+      <p className="text-[11px] text-muted-foreground">
+        {mode === "servicio"
+          ? "Figura hoy. El día de esta fecha es el vencimiento de cada mes."
+          : "Figura hoy. Cambiala si el gasto o el ingreso fue otro día."}
+      </p>
       <Input
         ref={conceptRef}
         value={concept}
-        onChange={(e) => setConcept(e.target.value)}
+        onChange={(e) => {
+          const value = e.target.value;
+          setConcept(value);
+          if (mode === "servicio" && !subTouched) setServiceSub(guessServiceSubcategory(value));
+        }}
         placeholder={
           mode === "servicio" ? "Netflix, luz, internet…" : mode === "ingreso" ? "Cumpleaños, sueldo…" : "Milanesa, cigarrillos, asado…"
         }
@@ -300,6 +339,15 @@ export function QuickManual() {
           ))}
         </Select>
       )}
+      {mode === "servicio" ? (
+        <ServiceSubField
+          value={serviceSub}
+          onChange={(value) => {
+            setSubTouched(true);
+            setServiceSub(value);
+          }}
+        />
+      ) : null}
       {mode === "tarjeta" ? (
         <>
           <Select value={cardId} onChange={(e) => setCardId(e.target.value)}>
@@ -349,7 +397,7 @@ export function QuickManual() {
                       ? ` · faltan ${remaining} (${formatMoney(remaining * parsedAmount, currency)})`
                       : " · última"}
                     {" · termina "}
-                    {format(addMonths(new Date(new Date().getFullYear(), new Date().getMonth(), 1), remaining), "MMMM yyyy", { locale: es })}
+                    {format(addMonths(new Date(chargeDate.getFullYear(), chargeDate.getMonth(), 1), remaining), "MMMM yyyy", { locale: es })}
                   </p>
                 </>
               ) : null}

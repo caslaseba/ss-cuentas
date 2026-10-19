@@ -50,6 +50,7 @@ export function categoryFromSlug(slug: string) {
 export type CategoryOriginRow = {
   name: string;
   sueldo: number;
+  ingreso: number;
   visa: number;
   papa: number;
   total: number;
@@ -66,7 +67,7 @@ export function categoryOriginSplit(
   const buckets: Record<string, CategoryOriginRow> = {};
 
   function row(name: string) {
-    buckets[name] ??= { name, sueldo: 0, visa: 0, papa: 0, total: 0 };
+    buckets[name] ??= { name, sueldo: 0, ingreso: 0, visa: 0, papa: 0, total: 0 };
     return buckets[name];
   }
 
@@ -77,7 +78,9 @@ export function categoryOriginSplit(
 
   for (const t of cashTx) {
     const r = row(catName(t));
-    r.sueldo += toArs(Number(t.amount), t.currency);
+    const amount = toArs(Number(t.amount), t.currency);
+    if (t.type === "ingreso") r.ingreso += amount;
+    else r.sueldo += amount;
   }
   for (const t of cardTx.filter((x) => x.type === "egreso")) {
     const r = row(catName(t));
@@ -87,7 +90,7 @@ export function categoryOriginSplit(
   }
   return Object.values(buckets)
     .map((r) => ({ ...r, total: r.sueldo + r.visa + r.papa }))
-    .sort((a, b) => b.total - a.total);
+    .sort((a, b) => Math.max(b.total, b.ingreso) - Math.max(a.total, a.ingreso));
 }
 
 export function txsForCategory(
@@ -95,14 +98,18 @@ export function txsForCategory(
   cashTx: Transaction[],
   cardTx: Transaction[],
   categories: Category[],
+  papaId: string | null = null,
 ) {
   const match = (t: Transaction) => {
     const raw = categories.find((c) => c.id === t.category_id)?.name ?? "Sin categoría";
     return groupCategory(raw) === name;
   };
+  const cards = cardTx.filter((t) => t.type === "egreso" && match(t));
   return {
-    sueldo: cashTx.filter(match),
-    tarjeta: cardTx.filter((t) => t.type === "egreso" && match(t)),
+    ingreso: cashTx.filter((t) => t.type === "ingreso" && match(t)),
+    sueldo: cashTx.filter((t) => t.type === "egreso" && match(t)),
+    visa: cards.filter((t) => t.credit_card_id !== papaId),
+    papa: cards.filter((t) => Boolean(papaId) && t.credit_card_id === papaId),
   };
 }
 

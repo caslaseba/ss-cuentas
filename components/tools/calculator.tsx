@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Calculator } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { formatAmountFromNumber } from "@/lib/finance/amount";
 
 const ROWS = [
@@ -105,6 +104,13 @@ export function CalculatorWidget() {
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
+      const target = e.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return;
+        if (target.closest("[role='dialog']")) return;
+      }
+      if (document.querySelector("[role='dialog']")) return;
       const mapped = keyToPress(e);
       if (!mapped) return;
       if (mapped === "Esc") {
@@ -130,37 +136,38 @@ export function CalculatorWidget() {
         variant="ghost"
         className="h-9 w-9 p-0"
         aria-label="Calculadora"
-        onClick={() => setOpen(true)}
+        aria-pressed={open}
+        onClick={() => setOpen((v) => !v)}
       >
         <Calculator className="h-4 w-4" />
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent
-          className="max-w-xs"
-          onEscapeKeyDown={(e) => {
-            if (exprRef.current !== "0") {
-              e.preventDefault();
-              press("C");
-            }
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>Calculadora</DialogTitle>
-          </DialogHeader>
-          <p className="text-xs text-muted-foreground">También podés usar el teclado numérico.</p>
+      {open ? (
+        <div className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-3 z-40 w-52 rounded-2xl border border-border bg-background p-2 shadow-xl">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium">Calculadora</p>
+            <button
+              type="button"
+              className="rounded-md px-1.5 text-sm text-muted-foreground hover:text-foreground"
+              aria-label="Cerrar calculadora"
+              onClick={() => setOpen(false)}
+            >
+              ×
+            </button>
+          </div>
           <p
-            className={`mt-2 rounded-xl border bg-muted px-3 py-3 text-right text-2xl font-semibold tabular-nums ${error ? "text-destructive" : ""}`}
+            className={`rounded-lg border bg-muted px-2 py-1.5 text-right text-lg font-semibold tabular-nums ${error ? "text-destructive" : ""}`}
           >
             {expr}
           </p>
-          <div className="mt-3 grid grid-cols-4 gap-2">
+          <div className="mt-2 grid grid-cols-4 gap-1">
             {ROWS.flatMap((row, i) =>
               row.map((key, j) => (
                 <Button
                   key={`${i}-${j}-${key}`}
                   type="button"
+                  size="sm"
                   variant={/[÷×−+=C]/.test(key) ? "default" : "outline"}
-                  className={key === "0" ? "col-span-2" : ""}
+                  className={`h-8 px-0 text-sm ${key === "0" ? "col-span-2" : ""}`}
                   onClick={() => press(key)}
                 >
                   {key}
@@ -168,8 +175,8 @@ export function CalculatorWidget() {
               )),
             )}
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      ) : null}
     </>
   );
 }

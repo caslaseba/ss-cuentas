@@ -5,12 +5,13 @@ import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
-import { Eye, EyeOff } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { PinGate } from "@/components/entry/pin-gate";
 import { TransactionEdit } from "@/components/entry/transaction-edit";
 import { RecurringEdit } from "@/components/entry/recurring-edit";
 import { MonthMoves } from "@/components/dashboard/month-moves";
+import { MovementRow } from "@/components/dashboard/movement-row";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -18,9 +19,8 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
-import { MY_CARD_NAME } from "@/lib/finance/cards";
-import { cashRecurringPaid, categoryOriginSplit, categorySlug, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
-import { cardCoversRecurring, isCardRecurring, recurringVia } from "@/lib/finance/recurring";
+import { cashRecurringPaid, categoryOriginSplit, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
+import { cardCoversRecurring, recurringVia, servicesBySubcategory } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
 import { spendOnCard } from "@/lib/finance/month-view";
@@ -63,7 +63,7 @@ function ResumenInner() {
     mine,
     papa,
     toArs,
-    cashSpend,
+    cashMoves,
     openCardTx,
     monthMoves,
     tarjetaAbierta,
@@ -81,6 +81,8 @@ function ResumenInner() {
   const { unlocked, askPin, pinError, guard, submitPin, closePin } = useEditGate();
   const canEdit = !isPast || unlocked;
   const [hideSueldo, setHideSueldo] = useState(true);
+  const [openCats, setOpenCats] = useState<string[]>([]);
+  const [openSubs, setOpenSubs] = useState<string[]>([]);
   const [closeDay, setCloseDay] = useState(String(closingDay));
   const [savingClose, setSavingClose] = useState(false);
 
@@ -110,11 +112,8 @@ function ResumenInner() {
   const beforePapa = spendOnCard(billBefore, papa?.id ?? null, toArs);
   const closeLabel = closeDate ? format(closeDate, "d/M") : null;
   const dueLabel = dueDate ? format(dueDate, "d/M") : null;
-  const cats = categoryOriginSplit(cashSpend, openCardTx, categories, mine?.id ?? null, papa?.id ?? null, toArs);
-  const cashRecurring = recurring.filter((r) => !isCardRecurring(r));
-  const unpaid = cashRecurring.filter((r) => !cashRecurringPaid(r, transactions, cursor, isCurrent));
-  const paid = cashRecurring.filter((r) => cashRecurringPaid(r, transactions, cursor, isCurrent));
-  const cardServices = isCurrent ? recurring.filter((r) => isCardRecurring(r)) : [];
+  const cats = categoryOriginSplit(cashMoves, openCardTx, categories, mine?.id ?? null, papa?.id ?? null, toArs);
+  const serviceGroups = servicesBySubcategory(recurring);
 
   const linkedPay = (r: RecurringPayment) =>
     transactions.find(
@@ -132,6 +131,23 @@ function ResumenInner() {
     router.replace(`/resumen?mes=${monthKey(next)}`, { scroll: false });
   }
 
+  function toggleName(current: string[], name: string) {
+    return current.includes(name) ? current.filter((item) => item !== name) : [...current, name];
+  }
+
+  function movesFor(name: string) {
+    const papaId = papa?.id ?? null;
+    const matched = monthMoves.filter((t) => {
+      const raw = categories.find((c) => c.id === t.category_id)?.name ?? "Sin categoría";
+      return groupCategory(raw) === name;
+    });
+    return {
+      plata: matched.filter((t) => t.payment_method !== "tarjeta_credito"),
+      mia: matched.filter((t) => t.payment_method === "tarjeta_credito" && t.credit_card_id !== papaId),
+      extension: matched.filter((t) => Boolean(papaId) && t.credit_card_id === papaId),
+    };
+  }
+
   function selectTx(tx: Transaction) {
     if (isProjectedTx(tx)) {
       toast.message("Es una proyección: todavía no se debitó.");
@@ -142,6 +158,79 @@ function ResumenInner() {
 
   function selectFixed(r: RecurringPayment) {
     guard(() => setEditingFixed(r), isPast);
+  }
+
+  function serviceCard(r: RecurringPayment) {
+    const via = recurringVia(r);
+    if (via.onCard) {
+      const onCard = cardCoversRecurring(r, transactions, cursor);
+      const extension = Boolean(papa && via.cardId === papa.id);
+      return (
+        <button
+          key={r.id}
+          type="button"
+          onClick={() => selectFixed(r)}
+          className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1 text-left"
+        >
+          <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
+          <p className="text-[11px] font-semibold leading-tight tabular-nums">
+            {formatMoney(Number(r.amount), r.currency)}
+          </p>
+          <p className="truncate text-[9px] leading-tight text-muted-foreground">
+            {extension ? "Extensión" : "Mi tarjeta"}
+            {onCard ? " · en resumen" : " · se debita"}
+          </p>
+        </button>
+      );
+    }
+    const isPaid = cashRecurringPaid(r, transactions, cursor, isCurrent);
+    const linked = linkedPay(r);
+    return (
+      <div
+        key={r.id}
+        className={cn(
+          "rounded-md border px-1.5 py-1",
+          isPaid ? "border-emerald-500/30 bg-emerald-500/10" : "border-teal-500/30 bg-teal-500/10",
+        )}
+      >
+        <button type="button" className="w-full text-left" onClick={() => selectFixed(r)}>
+          <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
+          <p className="text-[11px] font-semibold leading-tight tabular-nums">
+            {formatMoney(Number(r.amount), r.currency)}
+          </p>
+          <p className="truncate text-[9px] leading-tight text-muted-foreground">
+            {isPaid
+              ? `PAGADO${linked ? ` ${format(parseISO(linked.occurred_on), "d/M")}` : ""}`
+              : `Día ${r.due_day}`}
+          </p>
+        </button>
+        {!isFuture && !isPaid ? (
+          <Button
+            size="sm"
+            className="mt-1 h-6 w-full px-1 text-[10px]"
+            onClick={() =>
+              guard(() => {
+                setPayDate(isoDate(new Date()));
+                setPayMethod("transferencia");
+                setPayAsk(r);
+              }, isPast)
+            }
+          >
+            Pagué
+          </Button>
+        ) : null}
+        {isPaid ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-1 h-6 w-full px-1 text-[10px]"
+            onClick={() => guard(() => setUnpayAsk(r), isPast)}
+          >
+            Deshacer
+          </Button>
+        ) : null}
+      </div>
+    );
   }
 
   async function confirmPay() {
@@ -268,12 +357,29 @@ function ResumenInner() {
         <p className="text-[11px] font-medium text-violet-950 dark:text-violet-100">
           En {prevName}, antes del cierre
         </p>
-        <p className="text-sm font-semibold tabular-nums text-violet-950 dark:text-violet-50">
-          {formatMoney(beforeTotal, "ARS")}
-        </p>
+        {papa ? (
+          <div className="mt-1 grid grid-cols-2 gap-1">
+            <div>
+              <p className="text-[10px] text-violet-900/80 dark:text-violet-100/80">Mi tarjeta</p>
+              <p className="text-sm font-semibold tabular-nums text-violet-950 dark:text-violet-50">
+                {formatMoney(beforeMine, "ARS")}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] text-fuchsia-900/80 dark:text-fuchsia-100/80">Extensión</p>
+              <p className="text-sm font-semibold tabular-nums text-fuchsia-950 dark:text-fuchsia-50">
+                {formatMoney(beforePapa, "ARS")}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm font-semibold tabular-nums text-violet-950 dark:text-violet-50">
+            {formatMoney(beforeTotal, "ARS")}
+          </p>
+        )}
         <p className="text-[10px] leading-tight text-violet-900/80 dark:text-violet-100/80">
-          Tuya {formatMoney(beforeMine, "ARS")}
-          {papa ? ` · papá ${formatMoney(beforePapa, "ARS")}` : ""}. Eso se suma en este mes.
+          {papa ? `Juntas ${formatMoney(beforeTotal, "ARS")}. ` : ""}
+          Eso se suma en este mes.
         </p>
         {afterTotal > 0 ? (
           <p className="mt-1 text-[10px] leading-tight text-violet-900/80 dark:text-violet-100/80">
@@ -364,131 +470,149 @@ function ResumenInner() {
               {formatMoney(visaPapa, "ARS")}
             </p>
             <p className="truncate text-[9px] leading-tight text-muted-foreground">
-              este mes
+              papá · este mes
               {closeLabel ? ` · cierra ${closeLabel}` : ""}
             </p>
           </Link>
-        ) : (
-          <div />
-        )}
-        <Link
-          href={`/resumen/origen/tarjeta?mes=${mes}`}
-          className="rounded-md border border-violet-500/40 bg-violet-500/15 px-1.5 py-1 text-left"
-        >
-          <p className="truncate text-[11px] font-medium leading-tight text-violet-900 dark:text-violet-100">
-            Total tarjetas
-          </p>
-          <p className="text-[11px] font-semibold leading-tight tabular-nums text-violet-950 dark:text-violet-50">
-            {formatMoney(tarjetaAbierta, "ARS")}
-          </p>
-          <p className="truncate text-[9px] leading-tight text-muted-foreground">
-            se ve este mes
-            {closeLabel ? ` · cierre ${closeLabel}` : ""}
-            {dueLabel ? ` · vence ${dueLabel}` : ""}
-          </p>
-        </Link>
+        ) : null}
+        {papa ? (
+          <div className="rounded-md border border-border bg-muted/40 px-1.5 py-1 text-left">
+            <p className="truncate text-[11px] font-medium leading-tight">Juntas</p>
+            <p className="text-[11px] font-semibold leading-tight tabular-nums">{formatMoney(tarjetaAbierta, "ARS")}</p>
+            <p className="truncate text-[9px] leading-tight text-muted-foreground">
+              mi tarjeta y la extensión van aparte
+              {dueLabel ? ` · vence ${dueLabel}` : ""}
+            </p>
+          </div>
+        ) : null}
       </div>
 
       {cats.length > 0 ? (
         <div className="space-y-1.5">
           <h2 className="text-xs font-medium">Por categoría</h2>
           <div className="grid grid-cols-3 gap-1">
-          {cats.map((row) => (
-            <Link
-              key={row.name}
-              href={`/resumen/categoria/${categorySlug(row.name)}?mes=${mes}`}
-              className={cn("rounded-md border px-1.5 py-1", categoryChipClass(groupCategory(row.name)))}
-            >
-              <p className="truncate text-[11px] font-medium leading-tight">{row.name}</p>
-              <p className="text-[11px] font-semibold leading-tight tabular-nums">{formatMoney(row.total, "ARS")}</p>
-              <p className="truncate text-[9px] leading-tight text-muted-foreground">
-                {[row.sueldo > 0 ? "Sueldo" : null, row.visa > 0 ? "Visa" : null, row.papa > 0 ? "Papá" : null]
-                  .filter(Boolean)
-                  .join(" · ") || "—"}
-              </p>
-            </Link>
-          ))}
+            {cats.map((row) => {
+              const open = openCats.includes(row.name);
+              const moves = open ? movesFor(row.name) : null;
+              const parts = [
+                row.ingreso > 0 ? `Entró ${formatMoney(row.ingreso, "ARS")}` : null,
+                row.sueldo > 0 ? `Sueldo ${formatMoney(row.sueldo, "ARS")}` : null,
+                row.visa > 0 ? `Mía ${formatMoney(row.visa, "ARS")}` : null,
+                row.papa > 0 ? `Ext. ${formatMoney(row.papa, "ARS")}` : null,
+              ].filter(Boolean);
+              return (
+                <div key={row.name} className={open ? "col-span-3" : ""}>
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    onClick={() => setOpenCats((current) => toggleName(current, row.name))}
+                    className={cn(
+                      "flex w-full items-start justify-between gap-1 rounded-md border px-1.5 py-1 text-left",
+                      categoryChipClass(groupCategory(row.name)),
+                    )}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-[11px] font-medium leading-tight">{row.name}</span>
+                      <span className="block text-[11px] font-semibold leading-tight tabular-nums">
+                        {row.total > 0 ? formatMoney(row.total, "ARS") : row.ingreso > 0 ? `+${formatMoney(row.ingreso, "ARS")}` : formatMoney(0, "ARS")}
+                      </span>
+                      <span className="block truncate text-[9px] leading-tight text-muted-foreground">
+                        {parts.join(" · ") || "—"}
+                      </span>
+                    </span>
+                    {open ? <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                  </button>
+                  {open && moves ? (
+                    <div className="mt-1 space-y-2 rounded-md border border-border bg-background p-1.5">
+                      {moves.plata.length === 0 && moves.mia.length === 0 && moves.extension.length === 0 ? (
+                        <p className="text-[11px] text-muted-foreground">Nada de esta categoría en este mes.</p>
+                      ) : null}
+                      {moves.plata.length > 0 ? (
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-medium text-muted-foreground">En plata</p>
+                          {moves.plata.map((t) => (
+                            <MovementRow
+                              key={t.id}
+                              tx={t}
+                              categories={categories}
+                              cards={cards}
+                              installments={installments}
+                              onSelect={selectTx}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
+                      {moves.mia.length > 0 ? (
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-medium text-violet-800 dark:text-violet-200">Mi tarjeta</p>
+                          {moves.mia.map((t) => (
+                            <MovementRow
+                              key={t.id}
+                              tx={t}
+                              categories={categories}
+                              cards={cards}
+                              installments={installments}
+                              onSelect={selectTx}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
+                      {moves.extension.length > 0 ? (
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-medium text-fuchsia-800 dark:text-fuchsia-200">Extensión</p>
+                          {moves.extension.map((t) => (
+                            <MovementRow
+                              key={t.id}
+                              tx={t}
+                              categories={categories}
+                              cards={cards}
+                              installments={installments}
+                              onSelect={selectTx}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : null}
 
-      {unpaid.length > 0 || paid.length > 0 || cardServices.length > 0 ? (
+      {serviceGroups.length > 0 ? (
         <div className="space-y-1.5">
-          <h2 className="text-xs font-medium">Servicios del mes</h2>
-          <div className="grid grid-cols-3 gap-1">
-          {cardServices.map((r) => {
-            const via = recurringVia(r);
-            const card = cards.find((c) => c.id === via.cardId);
-            const onCard = cardCoversRecurring(r, transactions, cursor);
+          <h2 className="text-xs font-medium">Servicios</h2>
+          <p className="text-[11px] text-muted-foreground">
+            Gastos de cada mes, como luz, gas o YouTube. Las cuotas no entran acá.
+          </p>
+          {serviceGroups.map((group) => {
+            const open = openSubs.includes(group.sub);
+            const sum = group.items.reduce((total, item) => total + toArs(Number(item.amount), item.currency), 0);
             return (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => selectFixed(r)}
-                className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1 text-left"
-              >
-                <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
-                <p className="text-[11px] font-semibold leading-tight tabular-nums">
-                  {formatMoney(Number(r.amount), r.currency)}
-                </p>
-                <p className="truncate text-[9px] leading-tight text-muted-foreground">
-                  {card?.name ?? MY_CARD_NAME}
-                  {onCard ? " · en resumen" : " · se debita"}
-                </p>
-              </button>
-            );
-          })}
-          {unpaid.map((r) => (
-            <div key={r.id} className="rounded-md border border-teal-500/30 bg-teal-500/10 px-1.5 py-1">
-              <button type="button" className="w-full text-left" onClick={() => selectFixed(r)}>
-                <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
-                <p className="text-[11px] font-semibold leading-tight tabular-nums">
-                  {formatMoney(Number(r.amount), r.currency)}
-                </p>
-                <p className="truncate text-[9px] leading-tight text-muted-foreground">Día {r.due_day}</p>
-              </button>
-              {!isFuture ? (
-                <Button
-                  size="sm"
-                  className="mt-1 h-6 w-full px-1 text-[10px]"
-                  onClick={() =>
-                    guard(() => {
-                      setPayDate(isoDate(new Date()));
-                      setPayMethod("transferencia");
-                      setPayAsk(r);
-                    }, isPast)
-                  }
+              <div key={group.sub} className="space-y-1">
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() => setOpenSubs((current) => toggleName(current, group.sub))}
+                  className="flex w-full items-center justify-between gap-2 rounded-md border border-teal-500/30 bg-teal-500/10 px-2 py-1.5 text-left"
                 >
-                  Pagué
-                </Button>
-              ) : null}
-            </div>
-          ))}
-          {paid.map((r) => {
-            const linked = linkedPay(r);
-            return (
-            <div key={r.id} className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-1">
-              <button type="button" className="w-full text-left" onClick={() => selectFixed(r)}>
-                <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
-                <p className="text-[11px] font-semibold leading-tight tabular-nums">
-                  {formatMoney(Number(r.amount), r.currency)}
-                </p>
-                <p className="truncate text-[9px] font-medium leading-tight text-emerald-800 dark:text-emerald-200">
-                  PAGADO{linked ? ` ${format(parseISO(linked.occurred_on), "d/M")}` : ""}
-                </p>
-              </button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="mt-1 h-6 w-full px-1 text-[10px]"
-                onClick={() => guard(() => setUnpayAsk(r), isPast)}
-              >
-                Deshacer
-              </Button>
-            </div>
+                  <span className="min-w-0">
+                    <span className="block text-[11px] font-medium leading-tight">{group.sub}</span>
+                    <span className="block text-[10px] text-muted-foreground">
+                      {group.items.length} {group.items.length === 1 ? "servicio" : "servicios"}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-1 text-[11px] font-semibold tabular-nums">
+                    {formatMoney(sum, "ARS")}
+                    {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                  </span>
+                </button>
+                {open ? <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">{group.items.map((item) => serviceCard(item))}</div> : null}
+              </div>
             );
           })}
-          </div>
         </div>
       ) : null}
 

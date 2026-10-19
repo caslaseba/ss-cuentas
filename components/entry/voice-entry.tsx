@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ServiceSubField } from "@/components/entry/service-sub-field";
 import { AmountInput } from "@/components/ui/amount-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,7 +23,8 @@ import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
 import { householdCards } from "@/lib/finance/cards";
 import { matchCard, matchCategory, categoryLabel } from "@/lib/finance/match";
 import { describeCategoryChoice } from "@/lib/finance/similar-category";
-import { BETA_VOICE_EXAMPLES, parseVoiceCommand, parseVoiceCommandBeta, VOICE_EXAMPLES } from "@/lib/parsers/voice-parser";
+import { parseVoiceCommand, parseVoiceCommandBeta } from "@/lib/parsers/voice-parser";
+import { guessServiceSubcategory, withRecurringSub, type ServiceSubcategory } from "@/lib/finance/recurring";
 import { withObservation } from "@/lib/finance/tx-notes";
 import { formatMoney, isoDate } from "@/lib/utils";
 import type { CurrencyCode, PaymentMethod, TransactionType } from "@/lib/types";
@@ -55,6 +57,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
   const [cuotas, setCuotas] = useState("");
   const [enCuotas, setEnCuotas] = useState(false);
   const [date, setDate] = useState(isoDate(new Date()));
+  const [serviceSub, setServiceSub] = useState<ServiceSubcategory>("Otro");
   const [observation, setObservation] = useState("");
 
   useEffect(() => {
@@ -74,6 +77,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
     }
     const cat = matchCategory(categories, parsed.type, parsed.concept, parsed.categoryHint);
     if (cat) setCategoryId(cat.id);
+    setServiceSub(guessServiceSubcategory(parsed.concept));
     setEdit(parsed.confidence === "baja");
   }, [parsed, cards, categories, transactions]);
 
@@ -119,13 +123,15 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
         }
       }
       if (beta && parsed?.intent === "servicio") {
+        const dueDay = Math.min(28, Number(date.slice(8, 10)) || new Date().getDate() || 1);
         await saveRecurring({
           name: concept.trim(),
           amount: n,
           currency,
           frequency: "mensual",
-          due_day: Math.min(28, new Date().getDate() || 1),
+          due_day: dueDay,
           category_id: resolvedCategoryId,
+          notes: withRecurringSub(null, serviceSub),
         });
         toast.success("Servicio mensual guardado");
         setOpen(false);
@@ -189,6 +195,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
         onClick={() => {
           setOpen(true);
           setEdit(false);
+          setDate(isoDate(new Date()));
           speech.start();
         }}
         aria-label="Dictar"
@@ -222,10 +229,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
           {speech.error && <p className="mb-3 text-sm text-destructive">{speech.error}</p>}
 
           <p className="mb-3 min-h-10 rounded-xl bg-muted p-3 text-sm">
-            {speech.transcript ||
-              (beta
-                ? "Probá: “Gasté 2 mil pesos en cigarrillos”."
-                : "Probá: “Cobré 2 millones” o “Compré milanesa por 15 mil”.")}
+            {speech.transcript || "Te escucho."}
           </p>
 
           {!edit && parsed ? (
@@ -327,9 +331,17 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
                   ) : null}
                 </>
               ) : null}
-              <Field label="Fecha" className={method === "tarjeta_credito" && enCuotas ? "" : "col-span-2"}>
-                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-              </Field>
+            </div>
+          ) : null}
+
+          <div className="mt-3">
+            <Label className="mb-1.5 block">Fecha</Label>
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <p className="mt-1 text-[11px] text-muted-foreground">Hoy. Cambiala si lo cargás otro día.</p>
+          </div>
+          {parsed?.intent === "servicio" ? (
+            <div className="mt-3">
+              <ServiceSubField value={serviceSub} onChange={setServiceSub} />
             </div>
           ) : null}
 
@@ -349,9 +361,6 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
             </Button>
           </div>
 
-          <p className="mt-3 text-[11px] text-muted-foreground">
-            Ej: {(beta ? BETA_VOICE_EXAMPLES : VOICE_EXAMPLES)[0]}
-          </p>
         </DialogContent>
       </Dialog>
     </>

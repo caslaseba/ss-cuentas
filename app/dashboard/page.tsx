@@ -29,11 +29,6 @@ export default function DashboardPage() {
       <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
         <div className="flex flex-col items-center gap-2 rounded-3xl border border-dashed border-primary/30 bg-primary/5 px-4 py-6">
           <VoiceEntry />
-          <p className="mt-4 max-w-xs text-center text-sm text-muted-foreground">
-            {beta
-              ? "Tocá el micrófono. Ej: “Gasté 2 mil pesos en cigarrillos” o “Se va a pagar mensualmente 24 mil pesos por Netflix”."
-              : "Tocá el micrófono. Ej: “Cobré 2 millones” o “Compré milanesa por 15 mil”."}
-          </p>
         </div>
 
         <Card>

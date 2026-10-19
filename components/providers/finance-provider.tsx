@@ -7,7 +7,14 @@ import { enqueueOutbox, readOutbox, removeOutbox } from "@/lib/offline/sync";
 import { applyOutboxToSnapshot, readFinanceSnapshot, writeFinanceSnapshot } from "@/lib/offline/snapshot";
 import { findIcbcAccount, findMpAccount, ICBC_ACCOUNT_NAME, MP_ACCOUNT_NAME, walletForMethod } from "@/lib/finance/accounts";
 import { DAD_CARD_NAME, MY_CARD_NAME, householdCards, isPapaCard } from "@/lib/finance/cards";
-import { cleanConceptName, findRecurringByName, isCardRecurring, withRecurringVia } from "@/lib/finance/recurring";
+import {
+  cleanConceptName,
+  findRecurringByName,
+  isCardRecurring,
+  recurringSubcategory,
+  withRecurringSub,
+  withRecurringVia,
+} from "@/lib/finance/recurring";
 import { withTimeout } from "@/lib/async";
 import { isoDate, monthKey } from "@/lib/utils";
 import type {
@@ -823,7 +830,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     const cleaned = cleanConceptName(input.name);
     if (!cleaned) return;
     const existing = findRecurringByName(recurring, input.matchName ?? cleaned);
-    const notes = withRecurringVia(existing?.notes, true, input.credit_card_id);
+    const notes = withRecurringSub(
+      withRecurringVia(existing?.notes, true, input.credit_card_id),
+      recurringSubcategory({ notes: existing?.notes ?? null, name: cleaned }),
+    );
     if (existing) {
       await updateRecurring(existing.id, {
         name: cleaned,
