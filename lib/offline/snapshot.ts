@@ -1,3 +1,4 @@
+import type { CardMonthClose } from "@/lib/finance/close-cycle";
 import type { OutboxItem } from "@/lib/offline/sync";
 import type {
   Account,
@@ -20,6 +21,7 @@ export type FinanceSnapshot = {
   transactions: Transaction[];
   installments: Installment[];
   recurring: RecurringPayment[];
+  monthCloses?: CardMonthClose[];
 };
 
 function storage() {

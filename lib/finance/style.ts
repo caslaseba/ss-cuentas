@@ -18,7 +18,7 @@ export function groupCategory(name: string | null | undefined) {
 
 export function categoryChipClass(group: string) {
   if (group === "Comida") {
-    return "bg-orange-500/15 text-orange-900 border-orange-500/30 dark:bg-orange-500/20 dark:text-orange-100 dark:border-orange-300/40";
+    return "bg-orange-100 text-orange-600 border-orange-300 dark:bg-orange-400/15 dark:text-orange-200 dark:border-orange-300/40";
   }
   if (group === "Supermercado") {
     return "bg-yellow-500/20 text-yellow-950 border-yellow-500/40 dark:bg-yellow-400/20 dark:text-yellow-50 dark:border-yellow-200/50";

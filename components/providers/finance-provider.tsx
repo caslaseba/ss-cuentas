@@ -22,6 +22,8 @@ import {
   isCardRecurring,
   withRecurringVia,
 } from "@/lib/finance/recurring";
+import type { CardMonthClose } from "@/lib/finance/close-cycle";
+import { loadMonthCloses, persistMonthCloses, withMonthClose } from "@/lib/finance/month-closes";
 import { withTimeout } from "@/lib/async";
 import { isoDate, monthKey } from "@/lib/utils";
 import type {
@@ -108,6 +110,8 @@ type FinanceContextValue = {
   updateCategory: (id: string, patch: { name: string }) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
   updateCategoryLimit: (id: string, monthly_limit: number | null) => Promise<void>;
+  monthCloses: CardMonthClose[];
+  saveMonthClose: (cardId: string, month: string, closingOn: string) => Promise<void>;
 };
 
 type BootstrapBody = {
@@ -145,6 +149,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [recurring, setRecurring] = useState<RecurringPayment[]>([]);
+  const [monthCloses, setMonthCloses] = useState<CardMonthClose[]>([]);
 
   const applySnap = useCallback((snap: FinanceSnapshot) => {
     booksRef.current = snap;
@@ -155,6 +160,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     setTransactions(snap.transactions);
     setInstallments(snap.installments);
     setRecurring(snap.recurring);
+    setMonthCloses(snap.monthCloses ?? []);
     writeFinanceSnapshot(snap);
   }, []);
 
@@ -309,6 +315,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         setTransactions(cachedNow.transactions);
         setInstallments(cachedNow.installments);
         setRecurring(cachedNow.recurring);
+        setMonthCloses(cachedNow.monthCloses ?? []);
         setLoading(false);
       }
 
@@ -346,10 +353,19 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       setAccounts(merged.accounts);
       setCards(merged.cards);
       setTransactions(merged.transactions);
-      setInstallments(merged.installments);
-      setRecurring(merged.recurring);
+      let closes = cachedNow?.monthCloses ?? [];
+      try {
+        closes = await loadMonthCloses(supabase, body.userId);
+      } catch {
+        closes = cachedNow?.monthCloses ?? [];
+      }
+      const stored = { ...merged, monthCloses: closes };
+      setInstallments(stored.installments);
+      setRecurring(stored.recurring);
+      setMonthCloses(closes);
+      booksRef.current = stored;
       setPendingSync(pending.length);
-      writeFinanceSnapshot(merged);
+      writeFinanceSnapshot(stored);
       setLoadError(null);
       setLoading(false);
       void primeHousehold(body).catch(() => undefined);
@@ -1240,6 +1256,24 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     await refresh();
   };
 
+  const saveMonthClose: FinanceContextValue["saveMonthClose"] = async (cardId, month, closingOn) => {
+    const next = withMonthClose(monthCloses, { cardId, month, closingOn });
+    if (!supabase) {
+      applySnap({ ...currentBooks(), monthCloses: next });
+      return;
+    }
+    setMonthCloses(next);
+    const base = booksRef.current ?? readFinanceSnapshot();
+    if (base) {
+      const stored = { ...base, monthCloses: next };
+      booksRef.current = stored;
+      writeFinanceSnapshot(stored);
+    }
+    const user = await currentUser();
+    if (!user) throw new Error("Sin sesión");
+    await persistMonthCloses(supabase, user.id, next);
+  };
+
   const primaryAccount = findIcbcAccount(accounts) ?? accounts[0] ?? null;
   const mpAccount = findMpAccount(accounts);
   const icbcAccount = findIcbcAccount(accounts);
@@ -1283,6 +1317,8 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         updateCategory,
         deleteCategory,
         updateCategoryLimit,
+        monthCloses,
+        saveMonthClose,
       }}
     >
       {children}

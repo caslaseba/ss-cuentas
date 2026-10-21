@@ -12,6 +12,7 @@ import { useEdition } from "@/components/providers/edition-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InstallApp } from "@/components/pwa/install-app";
+import { APP_VERSION } from "@/lib/version";
 
 export default function MasPage() {
   const { beta } = useEdition();
@@ -82,6 +83,7 @@ export default function MasPage() {
           <Link href="/usuarios">Usuarios</Link>
         </Button>
         ) : null}
+        <p className="pt-1 text-center text-xs text-muted-foreground">Versión {APP_VERSION}</p>
       </div>
     </div>
   );

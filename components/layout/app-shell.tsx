@@ -16,6 +16,7 @@ import { useEdition } from "@/components/providers/edition-provider";
 import { CalculatorWidget } from "@/components/tools/calculator";
 import { NotesWidget } from "@/components/tools/notes-widget";
 import { SearchWidget } from "@/components/tools/search-widget";
+import { APP_VERSION } from "@/lib/version";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -62,6 +63,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-2">
               <p className="truncate font-semibold" suppressHydrationWarning>
                 SS Cuentas
+              </p>
+              <p className="shrink-0 text-[11px] font-medium text-muted-foreground" suppressHydrationWarning>
+                v{APP_VERSION}
               </p>
               <EditionToggle />
             </div>

@@ -2,6 +2,8 @@
 
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
+import { useFinance } from "@/components/providers/finance-provider";
+import { sumNoteForCharge } from "@/lib/finance/close-cycle";
 import { paymentMethodLabel } from "@/lib/finance/match";
 import { cardOfTx, isProjectedTx } from "@/lib/finance/month-view";
 import { cleanConceptName } from "@/lib/finance/recurring";
@@ -33,6 +35,8 @@ export function MovementRow({
   tag?: string | null;
   onSelect: (tx: Transaction) => void;
 }) {
+  const { monthCloses } = useFinance();
+  const sumNote = sumNoteForCharge(tx, cards, monthCloses);
   const cat = categories.find((c) => c.id === tx.category_id)?.name;
   const catGroup = groupCategory(cat);
   const sign = tx.type === "ingreso" ? "+" : "−";
@@ -88,9 +92,9 @@ export function MovementRow({
               {tag}
             </span>
           ) : null}
-          {tx.payment_method === "tarjeta_credito" ? (
+          {sumNote ? (
             <span className="rounded-full border border-violet-500/40 bg-violet-500/15 px-1.5 py-0 text-[9px] font-medium text-violet-900 dark:text-violet-100">
-              {projected ? "Proyectada" : "Próx. mes"}
+              {sumNote}
             </span>
           ) : null}
           {projected ? (
