@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Calculator } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { formatAmountFromNumber } from "@/lib/finance/amount";
 
 const ROWS = [
   ["C", "⌫", "÷", "×"],
@@ -12,6 +12,12 @@ const ROWS = [
   ["1", "2", "3", "="],
   ["0", ","],
 ] as const;
+
+const OPS = "÷×−+";
+
+function isOp(key: string) {
+  return OPS.includes(key);
+}
 
 function keyToPress(e: KeyboardEvent) {
   if (e.ctrlKey || e.metaKey || e.altKey) return null;
@@ -30,63 +36,62 @@ function keyToPress(e: KeyboardEvent) {
   return null;
 }
 
-const OPS = "÷×−+";
-
-function isOp(key: string) {
-  return OPS.includes(key);
-}
-
-function operatorIndex(expr: string) {
-  const start = expr.startsWith("−") ? 1 : 0;
-  for (let i = start; i < expr.length; i++) {
-    if (OPS.includes(expr[i] ?? "")) return i;
-  }
-  return -1;
-}
-
-function nextExpr(current: string, key: string) {
+function append(current: string, key: string) {
   if (isOp(key)) {
-    if (current === "0" || current === "") return key === "−" ? "−" : `0${key}`;
+    if (current === "" || current === "0") return key === "−" ? "−" : `0${key}`;
     if (current === "−") return key === "−" ? "−" : `0${key}`;
-    const idx = operatorIndex(current);
-    if (idx >= 0) return `${current.slice(0, idx)}${key}${current.slice(idx + 1)}`;
+    const last = current[current.length - 1] ?? "";
+    if (isOp(last)) return `${current.slice(0, -1)}${key}`;
     return `${current}${key}`;
   }
-  if (current === "0" && /[\d,]/.test(key)) return key;
-  if (current === "−" && key === ",") return "−0,";
+  if (current === "0" && key !== ",") return key;
+  const chunk = current.split(/[÷×−+]/).pop() ?? "";
+  if (key === "," && chunk.includes(",")) return current;
   return `${current}${key}`;
+}
+
+function plain(value: number) {
+  if (!Number.isFinite(value)) return "0";
+  const rounded = Math.round(value * 100) / 100;
+  const negative = rounded < 0;
+  const abs = Math.abs(rounded);
+  const text = Number.isInteger(abs) ? String(abs) : String(abs);
+  return `${negative ? "−" : ""}${text.replace(".", ",")}`;
+}
+
+function resultOf(raw: string) {
+  let js = raw.replace(/×/g, "*").replace(/÷/g, "/").replace(/−/g, "-").replace(/,/g, ".");
+  js = js.replace(/[+\-*/.]+$/, "");
+  if (!js || js === "-" || !/^[\d.+\-*/]+$/.test(js)) return null;
+  try {
+    const value = Function(`"use strict"; return (${js})`)() as number;
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export function CalculatorWidget() {
   const [open, setOpen] = useState(false);
   const [expr, setExpr] = useState("0");
   const [error, setError] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const exprRef = useRef(expr);
+  const freshRef = useRef(false);
   exprRef.current = expr;
 
-  function toJs(raw: string) {
-    return raw.replace(/×/g, "*").replace(/÷/g, "/").replace(/−/g, "-").replace(/,/g, ".");
-  }
-
-  function resultOf(raw: string) {
-    const js = toJs(raw);
-    if (!/^[\d.+\-*/\s]+$/.test(js)) return null;
-    try {
-      const value = Function(`"use strict"; return (${js})`)() as number;
-      return Number.isFinite(value) ? value : null;
-    } catch {
-      return null;
-    }
-  }
+  useEffect(() => setMounted(true), []);
 
   function press(key: string) {
     setError(false);
     if (key === "C") {
+      freshRef.current = false;
       setExpr("0");
       return;
     }
     if (key === "⌫") {
-      setExpr((v) => (v.length <= 1 ? "0" : v.slice(0, -1)));
+      freshRef.current = false;
+      setExpr((value) => (value.length <= 1 ? "0" : value.slice(0, -1)));
       return;
     }
     if (key === "=") {
@@ -95,10 +100,17 @@ export function CalculatorWidget() {
         setError(true);
         return;
       }
-      setExpr(formatAmountFromNumber(value));
+      freshRef.current = true;
+      setExpr(plain(value));
       return;
     }
-    setExpr((v) => nextExpr(v, key));
+    if (freshRef.current && !isOp(key)) {
+      freshRef.current = false;
+      setExpr(key === "," ? "0," : key);
+      return;
+    }
+    freshRef.current = false;
+    setExpr((value) => append(value, key));
   }
 
   useEffect(() => {
@@ -110,15 +122,12 @@ export function CalculatorWidget() {
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return;
         if (target.closest("[role='dialog']")) return;
       }
-      if (document.querySelector("[role='dialog']")) return;
       const mapped = keyToPress(e);
       if (!mapped) return;
       if (mapped === "Esc") {
-        if (exprRef.current !== "0") {
-          e.preventDefault();
-          e.stopPropagation();
-          press("C");
-        }
+        e.preventDefault();
+        if (exprRef.current !== "0") press("C");
+        else setOpen(false);
         return;
       }
       e.preventDefault();
@@ -127,6 +136,43 @@ export function CalculatorWidget() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
+
+  const panel = open ? (
+    <div className="pointer-events-auto fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-3 z-40 w-40 rounded-2xl border border-border bg-background/95 p-1.5 shadow-xl">
+      <div className="mb-1 flex items-center justify-between gap-1">
+        <p className="text-[10px] font-medium">Calculadora</p>
+        <button
+          type="button"
+          className="rounded-md px-1.5 text-sm leading-none text-muted-foreground hover:text-foreground"
+          aria-label="Cerrar calculadora"
+          onClick={() => setOpen(false)}
+        >
+          ×
+        </button>
+      </div>
+      <p
+        className={`overflow-x-auto rounded-lg border bg-muted px-1.5 py-1 text-right text-sm font-semibold tabular-nums whitespace-nowrap ${error ? "text-destructive" : ""}`}
+      >
+        {expr}
+      </p>
+      <div className="mt-1 grid grid-cols-4 gap-1">
+        {ROWS.flatMap((row, i) =>
+          row.map((key, j) => (
+            <Button
+              key={`${i}-${j}-${key}`}
+              type="button"
+              size="sm"
+              variant={/[÷×−+=C]/.test(key) ? "default" : "outline"}
+              className={`h-7 px-0 text-xs ${key === "0" ? "col-span-2" : ""}`}
+              onClick={() => press(key)}
+            >
+              {key}
+            </Button>
+          )),
+        )}
+      </div>
+    </div>
+  ) : null;
 
   return (
     <>
@@ -137,46 +183,11 @@ export function CalculatorWidget() {
         className="h-9 w-9 p-0"
         aria-label="Calculadora"
         aria-pressed={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen((value) => !value)}
       >
         <Calculator className="h-4 w-4" />
       </Button>
-      {open ? (
-        <div className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-3 z-40 w-52 rounded-2xl border border-border bg-background p-2 shadow-xl">
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <p className="text-[11px] font-medium">Calculadora</p>
-            <button
-              type="button"
-              className="rounded-md px-1.5 text-sm text-muted-foreground hover:text-foreground"
-              aria-label="Cerrar calculadora"
-              onClick={() => setOpen(false)}
-            >
-              ×
-            </button>
-          </div>
-          <p
-            className={`rounded-lg border bg-muted px-2 py-1.5 text-right text-lg font-semibold tabular-nums ${error ? "text-destructive" : ""}`}
-          >
-            {expr}
-          </p>
-          <div className="mt-2 grid grid-cols-4 gap-1">
-            {ROWS.flatMap((row, i) =>
-              row.map((key, j) => (
-                <Button
-                  key={`${i}-${j}-${key}`}
-                  type="button"
-                  size="sm"
-                  variant={/[÷×−+=C]/.test(key) ? "default" : "outline"}
-                  className={`h-8 px-0 text-sm ${key === "0" ? "col-span-2" : ""}`}
-                  onClick={() => press(key)}
-                >
-                  {key}
-                </Button>
-              )),
-            )}
-          </div>
-        </div>
-      ) : null}
+      {mounted && panel ? createPortal(panel, document.body) : null}
     </>
   );
 }

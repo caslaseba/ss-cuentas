@@ -26,7 +26,7 @@ import {
   typicalMonthlySalary,
   uniqueById,
 } from "@/lib/finance/month-view";
-import { closeOnForMonth } from "@/lib/finance/close-cycle";
+import { closeOnForMonth, describedPeriod, salaryMonthOf } from "@/lib/finance/close-cycle";
 import { monthIsFuture, monthIsPast, monthIsSealed } from "@/lib/finance/edit-lock";
 import { hasCarryOver, monthWallet, shiftMonth } from "@/lib/finance/wallet";
 import { monthKey, startOfMonth } from "@/lib/utils";
@@ -98,29 +98,36 @@ export function useMonthView(initial?: Date) {
     ]);
   }
 
-  function parted(monthCursor: Date) {
-    const closeOn = closeOf(monthCursor);
-    const txs = pool(monthCursor);
-    return {
-      closeOn,
-      next: txs.filter((t) => t.occurred_on <= closeOn),
-      later: txs.filter((t) => t.occurred_on > closeOn),
-    };
+  const closeOn = closeOf(cursor);
+  const prevClose = closeOf(shiftMonth(cursor, -1));
+  const closingDay = Number(closeOn.slice(8, 10)) || closingDayDefault;
+  const period = describedPeriod(cursor, closeOf);
+  const laterPeriod = describedPeriod(shiftMonth(cursor, 1), closeOf);
+
+  const projectedSpan = [-3, -2, -1, 0, 1, 2].flatMap((delta) => {
+    const monthCursor = shiftMonth(cursor, delta);
+    return [
+      ...projectFor(monthCursor),
+      ...projectedCardRecurringTxs(recurring, transactions, cards, monthCursor, profile?.id ?? "", mine?.id ?? null),
+    ];
+  });
+  const cardUniverse = uniqueById([
+    ...transactions.filter((tx) => tx.type === "egreso" && tx.payment_method === "tarjeta_credito"),
+    ...projectedSpan,
+  ]);
+
+  function hitsSalary(monthCursor: Date) {
+    const key = monthKey(monthCursor);
+    return cardUniverse.filter((tx) => {
+      const salary = salaryMonthOf(tx.occurred_on, closeOf);
+      return Boolean(salary && monthKey(salary) === key);
+    });
   }
 
-  const currentPart = parted(cursor);
-  const prevPart = parted(shiftMonth(cursor, -1));
-  const olderPart = parted(shiftMonth(cursor, -2));
-  const oldestPart = parted(shiftMonth(cursor, -3));
-  const openCardTx = currentPart.next.concat(currentPart.later);
-  const closeOn = currentPart.closeOn;
-  const closingDay = Number(closeOn.slice(8, 10)) || closingDayDefault;
-  const sumsNext = currentPart.next;
-  const sumsLater = currentPart.later;
-  const statementTx = uniqueById([...prevPart.next, ...olderPart.later]);
-  const payableTx = uniqueById([...olderPart.next, ...oldestPart.later]);
-  const billBefore = prevPart.next;
-  const billAfter = olderPart.later;
+  const openCardTx = pool(cursor);
+  const hitsNow = hitsSalary(cursor);
+  const hitsNext = hitsSalary(shiftMonth(cursor, 1));
+  const hitsLater = hitsSalary(shiftMonth(cursor, 2));
 
   const realCashMoves = cashMonthMoves(wallet.monthTx);
   const projectedFijos =
@@ -137,7 +144,15 @@ export function useMonthView(initial?: Date) {
     b.occurred_on.localeCompare(a.occurred_on),
   );
 
-  const leftover = Math.max(0, monthWallet(transactions, toArs, shiftMonth(cursor, -1)).queda);
+  function cardSum(txs: Transaction[]) {
+    return txs
+      .filter((tx) => tx.type === "egreso")
+      .reduce((sum, tx) => sum + toArs(Number(tx.amount), tx.currency), 0);
+  }
+
+  const prevWallet = monthWallet(transactions, toArs, shiftMonth(cursor, -1));
+  const prevCardHit = cardSum(hitsSalary(shiftMonth(cursor, -1)));
+  const leftover = Math.max(0, prevWallet.cobrado - prevWallet.gastadoContado - prevCardHit);
   const alreadyCarried = hasCarryOver(transactions, cursor);
   const canGoNext = startOfMonth(cursor).getTime() < startOfMonth(shiftMonth(now, 12)).getTime();
 
@@ -146,15 +161,16 @@ export function useMonthView(initial?: Date) {
   const tarjetaAbierta = openCardTx
     .filter((t) => t.type === "egreso")
     .reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
-  const billMine = spendOnCard(payableTx, mine?.id ?? null, toArs);
-  const billPapa = spendOnCard(payableTx, papa?.id ?? null, toArs);
+  const cardHitsNow = cardSum(hitsNow);
+  const cardHitsNext = cardSum(hitsNext);
+  const cardHitsLater = cardSum(hitsLater);
 
   const typicalSalary = typicalMonthlySalary(transactions, toArs, now);
   const extraFijos = (isFuture ? projectedFijos : []).reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
   const cobrado = isFuture && wallet.cobrado <= 0 ? typicalSalary : wallet.cobrado;
   const gastadoContado = wallet.gastadoContado + extraFijos;
-  const queda = cobrado - gastadoContado;
-  const quedaSiPagaVisa = queda - billMine;
+  const queda = cobrado - gastadoContado - cardHitsNow;
+  const quedaSiPagaVisa = queda;
   const estimated = isFuture && wallet.cobrado <= 0;
   const sealed = monthIsSealed(cursor, now, monthStatement?.cycle, recurring, transactions);
 
@@ -188,14 +204,15 @@ export function useMonthView(initial?: Date) {
     visaPapa,
     closingDay,
     closeOn,
-    billBefore,
-    billAfter,
-    billMine,
-    billPapa,
-    sumsNext,
-    sumsLater,
-    statementTx,
-    payableTx,
+    prevClose,
+    periodStart: period.start,
+    periodEnd: period.end,
+    laterStart: laterPeriod.start,
+    laterEnd: laterPeriod.end,
+    cardHitsNow,
+    cardHitsNext,
+    cardHitsLater,
+    salaryMonthFor: (iso: string) => salaryMonthOf(iso, closeOf),
     typicalSalary,
     quedaSiPagaVisa,
     estimated,

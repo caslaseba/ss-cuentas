@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
-import { clampCloseOn, shortMonth } from "@/lib/finance/close-cycle";
+import { parseCloseOn, shortMonth } from "@/lib/finance/close-cycle";
 import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
 import { cardCoversRecurring, findRecurringByName, recurringVia } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
@@ -62,10 +62,15 @@ function ResumenInner() {
     toArs,
     monthMoves,
     closeOn,
-    sumsNext,
-    sumsLater,
-    statementTx,
-    payableTx,
+    prevClose,
+    periodStart,
+    periodEnd,
+    laterStart,
+    laterEnd,
+    cardHitsNow,
+    cardHitsNext,
+    cardHitsLater,
+    salaryMonthFor,
     saveMonthClose,
     cycleCard,
   } = view;
@@ -115,31 +120,40 @@ function ResumenInner() {
   const categoryRows = (() => {
     const buckets = new Map<
       string,
-      { name: string; total: number; ingreso: number; cardNext: number; cardLater: number; txs: Transaction[] }
+      { name: string; total: number; ingreso: number; cardBySalary: Map<string, number>; txs: Transaction[] }
     >();
     for (const tx of filteredMoves) {
       const raw = categories.find((item) => item.id === tx.category_id)?.name ?? (tx.type === "ingreso" ? "Ingresos" : "Sin categoría");
       const name = groupCategory(raw);
-      const row = buckets.get(name) ?? { name, total: 0, ingreso: 0, cardNext: 0, cardLater: 0, txs: [] };
+      const row = buckets.get(name) ?? {
+        name,
+        total: 0,
+        ingreso: 0,
+        cardBySalary: new Map<string, number>(),
+        txs: [] as Transaction[],
+      };
       const amount = toArs(Number(tx.amount), tx.currency);
       if (tx.type === "ingreso") row.ingreso += amount;
-      else if (tx.payment_method === "tarjeta_credito") {
-        if (tx.occurred_on <= closeOn) row.cardNext += amount;
-        else row.cardLater += amount;
-      } else row.total += amount;
+      else {
+        row.total += amount;
+        if (tx.payment_method === "tarjeta_credito") {
+          const salary = salaryMonthFor(tx.occurred_on);
+          if (salary) {
+            const key = monthKey(salary);
+            row.cardBySalary.set(key, (row.cardBySalary.get(key) ?? 0) + amount);
+          }
+        }
+      }
       row.txs.push(tx);
       buckets.set(name, row);
     }
-    return [...buckets.values()].sort(
-      (a, b) =>
-        Math.max(b.total, b.ingreso, b.cardNext, b.cardLater) - Math.max(a.total, a.ingreso, a.cardNext, a.cardLater),
-    );
+    return [...buckets.values()].sort((a, b) => Math.max(b.total, b.ingreso) - Math.max(a.total, a.ingreso));
   })();
 
   function splitLine(txs: Transaction[]) {
     const sums = new Map<string, { label: string; amount: number; order: number }>();
     for (const tx of txs) {
-      if (tx.type === "ingreso" || tx.payment_method === "tarjeta_credito") continue;
+      if (tx.type === "ingreso") continue;
       const src = sourceOf(tx);
       const order = src.id === mine?.id ? 0 : src.id === papa?.id ? 1 : src.id === "plata" ? 9 : 2;
       const current = sums.get(src.id) ?? { label: src.label, amount: 0, order };
@@ -182,27 +196,27 @@ function ResumenInner() {
         inCurrentMonth(t.occurred_on, cursor),
     );
 
-  function cardTotal(txs: Transaction[]) {
-    return txs
-      .filter((tx) => tx.type === "egreso")
-      .reduce((sum, tx) => sum + toArs(Number(tx.amount), tx.currency), 0);
+  const nextName = format(shiftMonth(cursor, 1), "MMMM", { locale: es });
+  const laterName = format(shiftMonth(cursor, 2), "MMMM", { locale: es });
+  const periodOk = periodStart <= periodEnd;
+
+  function dayLabel(iso: string) {
+    const [year, month, day] = iso.split("-").map(Number);
+    return format(new Date(year, (month || 1) - 1, day || 1), "dd/MM", { locale: es });
   }
 
-  const sumaProximo = cardTotal(sumsNext);
-  const sumaDespues = cardTotal(sumsLater);
-  const entraMes = cardTotal(statementTx);
-  const pagaMes = cardTotal(payableTx);
-  const nextName = format(shiftMonth(cursor, 1), "MMMM", { locale: es });
-  const payName = format(shiftMonth(cursor, 2), "MMMM", { locale: es });
-  const laterName = format(shiftMonth(cursor, 2), "MMMM", { locale: es });
-  const laterPayName = format(shiftMonth(cursor, 3), "MMMM", { locale: es });
+  function salaryLabel(key: string) {
+    const [year, month] = key.split("-").map(Number);
+    return shortMonth(new Date(year, (month || 1) - 1, 1));
+  }
 
-  function onCloseDate(value: string) {
+  function onCloseDate(month: Date, value: string) {
     if (!cycleCard || !value) return;
-    const closingOn = clampCloseOn(cursor, value);
+    const closingOn = parseCloseOn(value);
+    if (!closingOn) return;
     guard(() => {
-      void saveMonthClose(cycleCard.id, monthKey(cursor), closingOn)
-        .then(() => toast.success("Cierre de este mes guardado"))
+      void saveMonthClose(cycleCard.id, monthKey(month), closingOn)
+        .then(() => toast.success("Cierre guardado"))
         .catch((err) => toast.error(err instanceof Error ? err.message : "No se pudo guardar el cierre"));
     }, isPast);
   }
@@ -393,6 +407,15 @@ function ResumenInner() {
             <p className="text-xl font-semibold tracking-tight text-emerald-800 dark:text-emerald-300">
               {hideSueldo ? "••••••" : formatMoney(wallet.queda, "ARS")}
             </p>
+            <p className="text-[11px] text-muted-foreground">
+              {hideSueldo
+                ? "Plata de este mes, más la tarjeta que cae ahora"
+                : `Plata ${formatMoney(wallet.gastadoContado, "ARS")}${
+                    cardHitsNow > 0
+                      ? ` · Tarjeta ${formatMoney(cardHitsNow, "ARS")}`
+                      : " · la tarjeta de ahora cae el mes que viene"
+                  }`}
+            </p>
           </div>
           <Button
             type="button"
@@ -437,37 +460,46 @@ function ResumenInner() {
 
       {cycleCard ? (
         <section className="rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-2">
-          <div className="flex items-center justify-between gap-2">
-            <label htmlFor="cierre-tarjeta" className="text-xs font-medium">
-              Cierre de {format(cursor, "MMMM", { locale: es })}
+          <div className="grid grid-cols-2 gap-2">
+            <label className="min-w-0 text-xs font-medium" htmlFor="cierre-anterior">
+              Cierre anterior
+              <input
+                id="cierre-anterior"
+                type="date"
+                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+                value={prevClose}
+                onChange={(event) => onCloseDate(shiftMonth(cursor, -1), event.target.value)}
+              />
             </label>
-            <input
-              id="cierre-tarjeta"
-              type="date"
-              className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-              value={closeOn}
-              min={isoDate(cursor)}
-              max={isoDate(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0))}
-              onChange={(event) => onCloseDate(event.target.value)}
-            />
+            <label className="min-w-0 text-xs font-medium" htmlFor="cierre-tarjeta">
+              Este cierre
+              <input
+                id="cierre-tarjeta"
+                type="date"
+                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+                value={closeOn}
+                onChange={(event) => onCloseDate(cursor, event.target.value)}
+              />
+            </label>
           </div>
-          <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-            Hasta esa fecha el consumo se ve en este mes, se suma en {nextName} y se paga en {payName}.
-          </p>
+          {periodOk ? (
+            <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+              Del {dayLabel(periodStart)} al {dayLabel(periodEnd)} lo ves en el mes del consumo y descuenta en {nextName}.
+            </p>
+          ) : (
+            <p className="mt-1.5 text-[11px] leading-snug text-destructive">
+              El cierre anterior tiene que ser antes de este cierre.
+            </p>
+          )}
           <p className="mt-1 text-sm font-semibold">
-            Suma en {nextName} {formatMoney(sumaProximo, "ARS")}
+            Descuenta en {nextName} {formatMoney(cardHitsNext, "ARS")}
           </p>
-          {sumaDespues > 0 ? (
+          {cardHitsLater > 0 ? (
             <p className="text-[11px] text-muted-foreground">
-              Después del cierre se suma en {laterName} {formatMoney(sumaDespues, "ARS")} y se paga en {laterPayName}.
+              Del {dayLabel(laterStart)} al {dayLabel(laterEnd)} descuenta en {laterName}{" "}
+              {formatMoney(cardHitsLater, "ARS")}.
             </p>
           ) : null}
-          {entraMes > 0 ? (
-            <p className="text-[11px] text-muted-foreground">
-              Entra sumado este mes {formatMoney(entraMes, "ARS")}. Se paga en {nextName}.
-            </p>
-          ) : null}
-          {pagaMes > 0 ? <p className="text-[11px] font-medium">Se paga este mes {formatMoney(pagaMes, "ARS")}.</p> : null}
         </section>
       ) : null}
 
@@ -538,21 +570,18 @@ function ResumenInner() {
                     </span>
                     <span className="flex shrink-0 items-center gap-1 text-right text-sm font-semibold tabular-nums">
                       <span>
-                        {row.ingreso > 0 && row.total === 0 && row.cardNext === 0 && row.cardLater === 0
+                        {row.ingreso > 0 && row.total === 0
                           ? `+${formatMoney(row.ingreso, "ARS")}`
                           : row.total > 0
                             ? formatMoney(row.total, "ARS")
                             : null}
-                        {row.cardNext > 0 ? (
-                          <span className="block text-[11px] font-medium text-violet-800 dark:text-violet-200">
-                            {formatMoney(row.cardNext, "ARS")} en {shortMonth(shiftMonth(cursor, 1))}
-                          </span>
-                        ) : null}
-                        {row.cardLater > 0 ? (
-                          <span className="block text-[11px] font-medium text-violet-800 dark:text-violet-200">
-                            {formatMoney(row.cardLater, "ARS")} en {shortMonth(shiftMonth(cursor, 2))}
-                          </span>
-                        ) : null}
+                        {[...row.cardBySalary.entries()]
+                          .sort(([a], [b]) => a.localeCompare(b))
+                          .map(([key, amount]) => (
+                            <span key={key} className="block text-[11px] font-medium text-violet-800 dark:text-violet-200">
+                              Descuenta en {salaryLabel(key)} {formatMoney(amount, "ARS")}
+                            </span>
+                          ))}
                       </span>
                       {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                     </span>
