@@ -7,8 +7,10 @@ import { toast } from "sonner";
 import { PinGate } from "@/components/entry/pin-gate";
 import { TransactionEdit } from "@/components/entry/transaction-edit";
 import { MovementRow } from "@/components/dashboard/movement-row";
+import { useDropInstallment } from "@/hooks/use-drop-installment";
 import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
+import { planIdFromProjectedCuota } from "@/lib/finance/installment-drop";
 import {
   categoryFromSlug,
   categoryOriginSplit,
@@ -34,10 +36,17 @@ function CategoriaInner({ params }: { params: Promise<{ slug: string }> }) {
   const name = categoryFromSlug(slug);
   const view = useMonthView(cursorFromMes(search.get("mes")));
   const { askPin, pinError, guard, submitPin, closePin } = useEditGate();
+  const dropInstallment = useDropInstallment();
   const [editing, setEditing] = useState<Transaction | null>(null);
   const mes = monthKey(view.cursor);
 
   function selectTx(tx: Transaction) {
+    if (planIdFromProjectedCuota(tx.id)) {
+      guard(() => {
+        void dropInstallment(tx);
+      }, view.isPast);
+      return;
+    }
     if (isProjectedTx(tx)) {
       toast.message("Es una proyección: todavía no se debitó.");
       return;

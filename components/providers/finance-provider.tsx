@@ -80,6 +80,7 @@ type FinanceContextValue = {
     patch: Partial<Transaction> & { concept?: string; amount?: number },
   ) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
+  deleteInstallment: (id: string) => Promise<void>;
   convertToInstallments: (
     transactionId: string,
     count: number,
@@ -846,6 +847,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       const base = currentBooks();
       const current = base.transactions.find((t) => t.id === id);
       if (!current) throw new Error("No se encontró el gasto");
+      if (current.installment_id) {
+        throw new Error("Esta compra sigue en cuotas. Confirmá la baja del plan para que no vuelva el mes que viene.");
+      }
       const delta = current.payment_method === "tarjeta_credito" ? 0 : current.type === "ingreso" ? Number(current.amount) : -Number(current.amount);
       applySnap({
         ...base,
@@ -859,11 +863,50 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     }
     const current = transactions.find((t) => t.id === id);
     if (!current) throw new Error("No se encontró el gasto");
+    if (current.installment_id) {
+      throw new Error("Esta compra sigue en cuotas. Confirmá la baja del plan para que no vuelva el mes que viene.");
+    }
     if (current.id.startsWith("local-")) throw new Error("Ese movimiento todavía no se sincronizó");
     const { error } = await supabase.from("transactions").delete().eq("id", id);
     if (error) throw error;
     const delta = cashDelta(current);
     if (current.account_id && delta) await applyWallet(current.account_id, -delta);
+    await refresh();
+  };
+
+  const deleteInstallment: FinanceContextValue["deleteInstallment"] = async (id) => {
+    if (!supabase) {
+      const base = currentBooks();
+      const linked = base.transactions.filter((t) => t.installment_id === id);
+      let accounts = base.accounts;
+      for (const current of linked) {
+        const delta = cashDelta(current);
+        if (!current.account_id || !delta) continue;
+        accounts = accounts.map((account) =>
+          account.id === current.account_id ? { ...account, balance: Number(account.balance) - delta } : account,
+        );
+      }
+      applySnap({
+        ...base,
+        accounts,
+        transactions: base.transactions.filter((t) => t.installment_id !== id),
+        installments: base.installments.filter((item) => item.id !== id),
+      });
+      return;
+    }
+    const plan = installments.find((item) => item.id === id);
+    if (!plan) throw new Error("No se encontró el plan de cuotas");
+    const linked = transactions.filter(
+      (t) => t.installment_id === id && !t.id.startsWith("cuota-") && !t.id.startsWith("fijo-") && !t.id.startsWith("local-"),
+    );
+    for (const current of linked) {
+      const { error } = await supabase.from("transactions").delete().eq("id", current.id);
+      if (error) throw error;
+      const delta = cashDelta(current);
+      if (current.account_id && delta) await applyWallet(current.account_id, -delta);
+    }
+    const { error } = await supabase.from("installments").delete().eq("id", id);
+    if (error) throw error;
     await refresh();
   };
 
@@ -1346,6 +1389,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         updateCard,
         updateTransaction,
         deleteTransaction,
+        deleteInstallment,
         convertToInstallments,
         updateInstallment,
         saveRecurring,

@@ -18,6 +18,7 @@ import { paymentMethodLabel, unifyPaymentMethod } from "@/lib/finance/match";
 import { findRecurringByName, isCardRecurring } from "@/lib/finance/recurring";
 import { addMonths, planProgress } from "@/lib/finance/settlement";
 import { observationOf, withObservation } from "@/lib/finance/tx-notes";
+import { confirmDropInstallment } from "@/lib/finance/installment-drop";
 import { isProjectedTx } from "@/lib/finance/month-view";
 import { formatMoney } from "@/lib/utils";
 import type { PaymentMethod, Transaction } from "@/lib/types";
@@ -67,6 +68,7 @@ function EditForm({ tx, onDone }: { tx: Transaction; onDone: () => void }) {
     recurring,
     updateTransaction,
     deleteTransaction,
+    deleteInstallment,
     convertToInstallments,
     updateInstallment,
     linkCardService,
@@ -165,6 +167,20 @@ function EditForm({ tx, onDone }: { tx: Transaction; onDone: () => void }) {
   }
 
   async function remove() {
+    if (plan) {
+      if (!confirmDropInstallment(plan)) return;
+      setBusy(true);
+      try {
+        await deleteInstallment(plan.id);
+        toast.success("Plan de cuotas eliminado");
+        onDone();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "No se pudo borrar");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (!confirm("¿Borrar este movimiento?")) return;
     setBusy(true);
     try {
@@ -370,7 +386,7 @@ function EditForm({ tx, onDone }: { tx: Transaction; onDone: () => void }) {
           Guardar cambios
         </Button>
         <Button variant="destructive" disabled={busy} onClick={() => void remove()}>
-          Borrar
+          {plan ? "Borrar plan de cuotas" : "Borrar"}
         </Button>
       </div>
     </div>

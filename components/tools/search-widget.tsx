@@ -7,6 +7,8 @@ import { MovementSearch } from "@/components/dashboard/movement-search";
 import { useFinance } from "@/components/providers/finance-provider";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useDropInstallment } from "@/hooks/use-drop-installment";
+import { planIdFromProjectedCuota } from "@/lib/finance/installment-drop";
 import { isProjectedTx } from "@/lib/finance/month-view";
 import { usdToLocal } from "@/lib/finance/settlement";
 import { toast } from "sonner";
@@ -14,6 +16,7 @@ import type { Transaction } from "@/lib/types";
 
 export function SearchWidget() {
   const { transactions, categories, cards, installments, profile } = useFinance();
+  const dropInstallment = useDropInstallment();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
   const rate = Number(profile?.usd_exchange_rate ?? 0);
@@ -25,6 +28,10 @@ export function SearchWidget() {
   );
 
   function select(tx: Transaction) {
+    if (planIdFromProjectedCuota(tx.id)) {
+      void dropInstallment(tx);
+      return;
+    }
     if (isProjectedTx(tx)) {
       toast.message("Es una proyección: todavía no se debitó.");
       return;

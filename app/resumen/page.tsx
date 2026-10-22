@@ -15,9 +15,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { useDropInstallment } from "@/hooks/use-drop-installment";
 import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
 import { parseCloseOn, shortMonth } from "@/lib/finance/close-cycle";
+import { planIdFromProjectedCuota } from "@/lib/finance/installment-drop";
 import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
 import { cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
@@ -77,6 +79,7 @@ function ResumenInner() {
     cycleCard,
   } = view;
   const { unlocked, askPin, pinError, guard, submitPin, closePin } = useEditGate();
+  const dropInstallment = useDropInstallment();
   const canEdit = !isPast || unlocked;
   const [hideSueldo, setHideSueldo] = useState(true);
   const [openCats, setOpenCats] = useState<string[]>([]);
@@ -237,6 +240,12 @@ function ResumenInner() {
   }
 
   function selectTx(tx: Transaction) {
+    if (planIdFromProjectedCuota(tx.id)) {
+      guard(() => {
+        void dropInstallment(tx);
+      }, isPast);
+      return;
+    }
     if (isProjectedTx(tx)) {
       toast.message("Es una proyección: todavía no se debitó.");
       return;
