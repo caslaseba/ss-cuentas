@@ -26,6 +26,7 @@ import {
   typicalMonthlySalary,
   uniqueById,
 } from "@/lib/finance/month-view";
+import { BOOKS_START_ISO, BOOKS_START_MONTH } from "@/lib/finance/recurring";
 import { closeOnForMonth, describedPeriod, salaryMonthOf } from "@/lib/finance/close-cycle";
 import { monthIsFuture, monthIsPast, monthIsSealed } from "@/lib/finance/edit-lock";
 import { hasCarryOver, monthWallet, shiftMonth } from "@/lib/finance/wallet";
@@ -36,8 +37,19 @@ export function useMonthView(initial?: Date) {
   const finance = useFinance();
   const now = useMemo(() => new Date(), []);
   const initialKey = initial ? monthKey(startOfMonth(initial)) : "";
-  const [cursor, setCursor] = useState(() => startOfMonth(initial ?? now));
-  const { transactions, cards, profile, installments, recurring } = finance;
+  const [cursor, setCursorState] = useState(() => {
+    const start = startOfMonth(initial ?? now);
+    return monthKey(start) < BOOKS_START_MONTH ? new Date(2026, 9, 1) : start;
+  });
+  const setCursor = (value: Date | ((prev: Date) => Date)) => {
+    setCursorState((prev) => {
+      const next = startOfMonth(typeof value === "function" ? value(prev) : value);
+      if (monthKey(next) < BOOKS_START_MONTH) return prev;
+      return next;
+    });
+  };
+  const { transactions: allTransactions, cards, profile, installments, recurring } = finance;
+  const transactions = allTransactions.filter((tx) => tx.occurred_on >= BOOKS_START_ISO);
   const { mine, papa, visible } = householdCards(cards, transactions);
   const visibleIds = new Set(visible.map((c) => c.id));
 
@@ -150,9 +162,11 @@ export function useMonthView(initial?: Date) {
       .reduce((sum, tx) => sum + toArs(Number(tx.amount), tx.currency), 0);
   }
 
-  const prevWallet = monthWallet(transactions, toArs, shiftMonth(cursor, -1));
-  const prevCardHit = cardSum(hitsSalary(shiftMonth(cursor, -1)));
-  const leftover = Math.max(0, prevWallet.cobrado - prevWallet.gastadoContado - prevCardHit);
+  const previousMonth = shiftMonth(cursor, -1);
+  const previousInBooks = monthKey(previousMonth) >= BOOKS_START_MONTH;
+  const prevWallet = monthWallet(transactions, toArs, previousMonth);
+  const prevCardHit = previousInBooks ? cardSum(hitsSalary(previousMonth)) : 0;
+  const leftover = previousInBooks ? Math.max(0, prevWallet.cobrado - prevWallet.gastadoContado - prevCardHit) : 0;
   const alreadyCarried = hasCarryOver(transactions, cursor);
   const canGoNext = startOfMonth(cursor).getTime() < startOfMonth(shiftMonth(now, 12)).getTime();
 
@@ -164,6 +178,18 @@ export function useMonthView(initial?: Date) {
   const cardHitsNow = cardSum(hitsNow);
   const cardHitsNext = cardSum(hitsNext);
   const cardHitsLater = cardSum(hitsLater);
+  const cardDue = hitsNow
+    .filter((tx) => tx.type === "egreso")
+    .reduce(
+      (sum, tx) => {
+        const amount = toArs(Number(tx.amount), tx.currency);
+        if (papa && tx.credit_card_id === papa.id) sum.extension += amount;
+        else sum.visa += amount;
+        sum.total += amount;
+        return sum;
+      },
+      { visa: 0, extension: 0, total: 0 },
+    );
 
   const typicalSalary = typicalMonthlySalary(transactions, toArs, now);
   const extraFijos = (isFuture ? projectedFijos : []).reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
@@ -199,6 +225,8 @@ export function useMonthView(initial?: Date) {
     leftover,
     alreadyCarried,
     canGoNext,
+    canGoPrev: monthKey(cursor) > BOOKS_START_MONTH,
+    cardDue,
     tarjetaAbierta,
     visaMia,
     visaPapa,

@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { householdCards } from "@/lib/finance/cards";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
-import { recurringVia, withRecurringVia } from "@/lib/finance/recurring";
+import { baMonthKey, nextMonthKey, recurringVia, voidStartMonth, withRecurringVia } from "@/lib/finance/recurring";
 import { inCurrentMonth } from "@/lib/finance/wallet";
 import type { RecurringPayment } from "@/lib/types";
 
@@ -19,10 +19,12 @@ export function RecurringEdit({
   item,
   open,
   onOpenChange,
+  asOfMonth,
 }: {
   item: RecurringPayment | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  asOfMonth?: string;
 }) {
   if (!item) return null;
   return (
@@ -31,14 +33,14 @@ export function RecurringEdit({
         <DialogHeader>
           <DialogTitle>Editar mensual</DialogTitle>
         </DialogHeader>
-        <EditForm item={item} onDone={() => onOpenChange(false)} />
+        <EditForm item={item} asOfMonth={asOfMonth} onDone={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   );
 }
 
-function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void }) {
-  const { categories, cards, transactions, updateRecurring, deleteRecurring, toggleRecurringPaid, deleteTransaction } = useFinance();
+function EditForm({ item, asOfMonth, onDone }: { item: RecurringPayment; asOfMonth?: string; onDone: () => void }) {
+  const { categories, cards, transactions, updateRecurring, voidRecurring, toggleRecurringPaid, deleteTransaction } = useFinance();
   const { visible } = householdCards(cards, transactions);
   const via = recurringVia(item);
   const [name, setName] = useState(item.name);
@@ -64,6 +66,7 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
         due_day: onCard ? 1 : Math.min(28, Math.max(1, Number(dueDay) || 1)),
         category_id: categoryId || null,
         notes: withRecurringVia(item.notes, onCard, onCard ? cardId : null),
+        asOfMonth,
       });
       toast.success("Mensual actualizado");
       onDone();
@@ -75,14 +78,23 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
   }
 
   async function remove() {
-    if (!confirm(`¿Borrar ${item.name}? Deja de aparecer todos los meses.`)) return;
+    const from = voidStartMonth(asOfMonth);
+    const keepsThisMonth = from === nextMonthKey(baMonthKey());
+    if (
+      !confirm(
+        keepsThisMonth
+          ? `¿Anular ${item.name}? Este mes y los anteriores quedan como estaban. Desde el mes que viene figura anulado.`
+          : `¿Anular ${item.name}? Los meses anteriores quedan como estaban. Desde ${from} figura anulado.`,
+      )
+    )
+      return;
     setBusy(true);
     try {
-      await deleteRecurring(item.id);
-      toast.success("Mensual borrado");
+      await voidRecurring(item.id, asOfMonth);
+      toast.success("Quedó anulado en los meses que vienen");
       onDone();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "No se pudo borrar");
+      toast.error(err instanceof Error ? err.message : "No se pudo anular");
     } finally {
       setBusy(false);
     }
@@ -172,7 +184,7 @@ function EditForm({ item, onDone }: { item: RecurringPayment; onDone: () => void
           Guardar cambios
         </Button>
         <Button variant="destructive" disabled={busy} onClick={() => void remove()}>
-          Borrar
+          Anular de acá en adelante
         </Button>
       </div>
     </div>

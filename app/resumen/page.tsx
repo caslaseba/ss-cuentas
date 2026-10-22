@@ -19,7 +19,7 @@ import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
 import { parseCloseOn, shortMonth } from "@/lib/finance/close-cycle";
 import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
-import { cardCoversRecurring, findRecurringByName, recurringVia } from "@/lib/finance/recurring";
+import { cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
 import { cn, formatMoney, isoDate, monthKey } from "@/lib/utils";
@@ -70,6 +70,8 @@ function ResumenInner() {
     cardHitsNow,
     cardHitsNext,
     cardHitsLater,
+    cardDue,
+    canGoPrev,
     salaryMonthFor,
     saveMonthClose,
     cycleCard,
@@ -87,10 +89,13 @@ function ResumenInner() {
   const [payMethod, setPayMethod] = useState<PaymentMethod>("transferencia");
   const [unpayAsk, setUnpayAsk] = useState<RecurringPayment | null>(null);
 
-  const services = [...recurring].sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const viewedMonth = monthKey(cursor);
+  const services = [...recurring]
+    .filter((item) => shownRecurring(item, viewedMonth, transactions))
+    .sort((a, b) => a.name.localeCompare(b.name, "es"));
 
   function labelFor(card: CreditCard) {
-    if (mine && card.id === mine.id) return "Mi tarjeta";
+    if (mine && card.id === mine.id) return "Visa mía";
     if (papa && card.id === papa.id) return "Extensión";
     if (card.kind === "extension") return card.name;
     return card.name;
@@ -244,8 +249,24 @@ function ResumenInner() {
   }
 
   function serviceCard(r: RecurringPayment) {
+    const shown = shownRecurring(r, viewedMonth, transactions);
+    if (!shown) return null;
     const via = recurringVia(r);
     const catName = categories.find((item) => item.id === r.category_id)?.name;
+    if (shown.voided) {
+      return (
+        <button
+          key={r.id}
+          type="button"
+          onClick={() => selectFixed(r)}
+          className="rounded-md border border-dashed border-border bg-muted/40 px-1.5 py-1 text-left"
+        >
+          <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
+          <p className="text-[11px] font-semibold leading-tight">Anulado</p>
+          <p className="truncate text-[9px] leading-tight text-muted-foreground">Mensual · no se descuenta</p>
+        </button>
+      );
+    }
     if (via.onCard) {
       const onCard = cardCoversRecurring(r, transactions, cursor);
       const card = cards.find((item) => item.id === via.cardId) ?? (via.cardId === papa?.id ? papa : mine);
@@ -258,7 +279,7 @@ function ResumenInner() {
         >
           <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
           <p className="text-[11px] font-semibold leading-tight tabular-nums">
-            {formatMoney(Number(r.amount), r.currency)}
+            {formatMoney(shown.amount, shown.currency)}
           </p>
           <p className="truncate text-[9px] leading-tight text-muted-foreground">
             {catName ? `${catName} · ` : ""}
@@ -282,7 +303,7 @@ function ResumenInner() {
         <button type="button" className="w-full text-left" onClick={() => selectFixed(r)}>
           <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
           <p className="text-[11px] font-semibold leading-tight tabular-nums">
-            {formatMoney(Number(r.amount), r.currency)}
+            {formatMoney(shown.amount, shown.currency)}
           </p>
           <p className="truncate text-[9px] leading-tight text-muted-foreground">
             {catName ? `${catName} · ` : ""}
@@ -327,10 +348,11 @@ function ResumenInner() {
     setPayAsk(null);
     try {
       if (isCurrent) await toggleRecurringPaid(r.id, true);
+      const shown = shownRecurring(r, viewedMonth, transactions);
       await saveTransaction({
         type: "egreso",
-        amount: Number(r.amount),
-        currency: r.currency,
+        amount: shown?.amount ?? Number(r.amount),
+        currency: shown?.currency ?? r.currency,
         concept: r.name,
         payment_method: payMethod,
         category_id: r.category_id,
@@ -379,7 +401,14 @@ function ResumenInner() {
     <div className="mx-auto w-full min-w-0 max-w-lg space-y-3 md:max-w-2xl">
       <div>
         <div className="mb-1.5 flex items-center justify-between gap-1">
-          <Button type="button" size="sm" variant="outline" className="h-8 px-2 text-xs" onClick={() => goMonth(-1)}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 px-2 text-xs"
+            disabled={!canGoPrev}
+            onClick={() => goMonth(-1)}
+          >
             ←
           </Button>
           <p className="text-center text-xs font-medium capitalize">{format(cursor, "MMMM yyyy", { locale: es })}</p>
@@ -615,18 +644,38 @@ function ResumenInner() {
         <p className="text-sm text-muted-foreground">Nada en este mes para ese filtro.</p>
       )}
 
-      {services.length > 0 ? (
+      {services.length > 0 || cardDue.total > 0 ? (
         <div className="space-y-1.5 pb-4">
           <h2 className="text-xs font-medium">Mensual</h2>
           <p className="text-[11px] text-muted-foreground">
-            Siguen en su categoría. Acá los marcás pagados.
+            Siguen en su categoría. Acá los marcás pagados. El total de la tarjeta cae en el mes en que se abona.
           </p>
-          <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">{services.map((item) => serviceCard(item))}</div>
+          <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+            {cardDue.total > 0 ? (
+              <div className="rounded-md border border-violet-500/40 bg-violet-500/10 px-1.5 py-1">
+                <p className="truncate text-[11px] font-medium leading-tight">TARJETA TOTAL</p>
+                <p className="text-[11px] font-semibold leading-tight tabular-nums">{formatMoney(cardDue.total, "ARS")}</p>
+                <p className="text-[9px] leading-tight text-muted-foreground">
+                  Visa mía {formatMoney(cardDue.visa, "ARS")}
+                </p>
+                <p className="text-[9px] leading-tight text-muted-foreground">
+                  Extensión {formatMoney(cardDue.extension, "ARS")}
+                </p>
+                <p className="text-[9px] leading-tight text-muted-foreground">Mensual · se abona este mes</p>
+              </div>
+            ) : null}
+            {services.map((item) => serviceCard(item))}
+          </div>
         </div>
       ) : null}
 
       <TransactionEdit tx={editing} open={Boolean(editing)} onOpenChange={(v) => !v && setEditing(null)} />
-      <RecurringEdit item={editingFixed} open={Boolean(editingFixed)} onOpenChange={(v) => !v && setEditingFixed(null)} />
+      <RecurringEdit
+        item={editingFixed}
+        asOfMonth={viewedMonth}
+        open={Boolean(editingFixed)}
+        onOpenChange={(v) => !v && setEditingFixed(null)}
+      />
       <PinGate open={askPin} error={pinError} onClose={closePin} onSubmit={submitPin} />
 
       <Dialog open={Boolean(payAsk)} onOpenChange={(v) => !v && setPayAsk(null)}>
@@ -636,7 +685,7 @@ function ResumenInner() {
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             {payAsk
-              ? `Se descuenta ${formatMoney(Number(payAsk.amount), payAsk.currency)} de tu sueldo por ${payAsk.name}.`
+              ? `Se descuenta ${formatMoney(shownRecurring(payAsk, viewedMonth, transactions)?.amount ?? Number(payAsk.amount), shownRecurring(payAsk, viewedMonth, transactions)?.currency ?? payAsk.currency)} de tu sueldo por ${payAsk.name}.`
               : null}
           </p>
           <div className="mt-3 space-y-2">

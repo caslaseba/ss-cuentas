@@ -17,9 +17,14 @@ import {
 import { findIcbcAccount, findMpAccount, ICBC_ACCOUNT_NAME, MP_ACCOUNT_NAME, walletForMethod } from "@/lib/finance/accounts";
 import { DAD_CARD_NAME, MY_CARD_NAME, householdCards, isPapaCard } from "@/lib/finance/cards";
 import {
+  applyPriceChange,
+  baMonthKey,
   cleanConceptName,
   findRecurringByName,
   isCardRecurring,
+  monthOfValue,
+  priceChangeMonth,
+  voidStartMonth,
   withRecurringVia,
 } from "@/lib/finance/recurring";
 import type { CardMonthClose } from "@/lib/finance/close-cycle";
@@ -92,9 +97,12 @@ type FinanceContextValue = {
   saveRecurring: (input: Partial<RecurringPayment> & { name: string; amount: number }) => Promise<void>;
   updateRecurring: (
     id: string,
-    patch: Partial<Pick<RecurringPayment, "name" | "amount" | "due_day" | "currency" | "category_id" | "notes">>,
+    patch: Partial<Pick<RecurringPayment, "name" | "amount" | "due_day" | "currency" | "category_id" | "notes">> & {
+      asOfMonth?: string;
+    },
   ) => Promise<void>;
   deleteRecurring: (id: string) => Promise<void>;
+  voidRecurring: (id: string, asOfMonth?: string) => Promise<void>;
   toggleRecurringPaid: (id: string, paid: boolean) => Promise<void>;
   linkCardService: (input: {
     name: string;
@@ -1027,6 +1035,8 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         category_id: input.category_id ?? null,
         account_id: input.account_id ?? null,
         notes: input.notes ?? null,
+        price_log: [{ from: baMonthKey(), amount: input.amount, currency: input.currency ?? "ARS" }],
+        void_from: null,
       };
       applySnap({ ...base, recurring: [...base.recurring, row] });
       toast.success("Guardado en esta sesión.");
@@ -1047,10 +1057,27 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       category_id: input.category_id ?? null,
       account_id: input.account_id ?? null,
       notes: input.notes ?? null,
+      price_log: [{ from: baMonthKey(), amount: input.amount, currency: input.currency ?? "ARS" }],
     });
     if (error) throw error;
     await refresh();
   };
+
+  function nextRecurring(current: RecurringPayment, patch: Parameters<FinanceContextValue["updateRecurring"]>[1]) {
+    const amount = patch.amount ?? current.amount;
+    const currency = patch.currency ?? current.currency;
+    const priceChanged = Number(amount) !== Number(current.amount) || currency !== current.currency;
+    return {
+      ...current,
+      name: patch.name ?? current.name,
+      amount,
+      due_day: patch.due_day ?? current.due_day,
+      currency,
+      category_id: patch.category_id === undefined ? current.category_id : patch.category_id,
+      notes: patch.notes === undefined ? current.notes : patch.notes,
+      price_log: priceChanged ? applyPriceChange(current, Number(amount), currency, priceChangeMonth(patch.asOfMonth)) : current.price_log,
+    };
+  }
 
   const updateRecurring: FinanceContextValue["updateRecurring"] = async (id, patch) => {
     if (!supabase) {
@@ -1059,35 +1086,50 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       if (!current) throw new Error("No se encontró el mensual");
       applySnap({
         ...base,
-        recurring: base.recurring.map((item) =>
-          item.id === id
-            ? {
-                ...item,
-                name: patch.name ?? item.name,
-                amount: patch.amount ?? item.amount,
-                due_day: patch.due_day ?? item.due_day,
-                currency: patch.currency ?? item.currency,
-                category_id: patch.category_id === undefined ? item.category_id : patch.category_id,
-                notes: patch.notes === undefined ? item.notes : patch.notes,
-              }
-            : item,
-        ),
+        recurring: base.recurring.map((item) => (item.id === id ? nextRecurring(item, patch) : item)),
       });
       return;
     }
     const current = recurring.find((r) => r.id === id);
     if (!current) throw new Error("No se encontró el mensual");
+    const next = nextRecurring(current, patch);
     const { error } = await supabase
       .from("recurring_payments")
       .update({
-        name: patch.name ?? current.name,
-        amount: patch.amount ?? current.amount,
-        due_day: patch.due_day ?? current.due_day,
-        currency: patch.currency ?? current.currency,
-        category_id: patch.category_id === undefined ? current.category_id : patch.category_id,
-        notes: patch.notes === undefined ? current.notes : patch.notes,
+        name: next.name,
+        amount: next.amount,
+        due_day: next.due_day,
+        currency: next.currency,
+        category_id: next.category_id,
+        notes: next.notes,
+        price_log: next.price_log ?? [],
       })
       .eq("id", id);
+    if (error) throw error;
+    await refresh();
+  };
+
+  const voidRecurring: FinanceContextValue["voidRecurring"] = async (id, asOfMonth) => {
+    const start = voidStartMonth(asOfMonth);
+    const apply = (current: RecurringPayment) => {
+      const existing = monthOfValue(current.void_from);
+      const voidFrom = existing && existing < start ? existing : start;
+      return { ...current, void_from: `${voidFrom}-01` };
+    };
+    if (!supabase) {
+      const base = currentBooks();
+      const current = base.recurring.find((r) => r.id === id);
+      if (!current) throw new Error("No se encontró el mensual");
+      applySnap({
+        ...base,
+        recurring: base.recurring.map((item) => (item.id === id ? apply(item) : item)),
+      });
+      return;
+    }
+    const current = recurring.find((r) => r.id === id);
+    if (!current) throw new Error("No se encontró el mensual");
+    const next = apply(current);
+    const { error } = await supabase.from("recurring_payments").update({ void_from: next.void_from }).eq("id", id);
     if (error) throw error;
     await refresh();
   };
@@ -1309,6 +1351,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         saveRecurring,
         updateRecurring,
         deleteRecurring,
+        voidRecurring,
         toggleRecurringPaid,
         linkCardService,
         unlinkCardService,

@@ -95,6 +95,12 @@ export type Transaction = {
   source: "manual" | "voz" | "recurrente" | "cuota";
 };
 
+export type RecurringPricePoint = {
+  from: string;
+  amount: number;
+  currency: CurrencyCode;
+};
+
 export type RecurringPayment = {
   id: string;
   user_id: string;
@@ -108,6 +114,10 @@ export type RecurringPayment = {
   category_id: string | null;
   account_id: string | null;
   notes: string | null;
+  /** Precio vigente desde cada mes. Los meses anteriores no se reescriben. */
+  price_log?: RecurringPricePoint[] | null;
+  /** Desde este mes (YYYY-MM o fecha) el mensual figura anulado. */
+  void_from?: string | null;
 };
 
 export type VoiceParseResult = {

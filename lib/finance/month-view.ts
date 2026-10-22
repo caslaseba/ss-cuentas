@@ -1,5 +1,5 @@
 import { isCashMethod } from "@/lib/finance/match";
-import { chargeMatchesRecurring, isCardRecurring, recurringVia } from "@/lib/finance/recurring";
+import { amountForMonth, chargeMatchesRecurring, isCardRecurring, recurringApplies, recurringVia } from "@/lib/finance/recurring";
 import type { BillingCycle } from "@/lib/finance/settlement";
 import { groupCategory } from "@/lib/finance/style";
 import { inCurrentMonth, monthWallet, shiftMonth } from "@/lib/finance/wallet";
@@ -241,8 +241,10 @@ export function projectedCashTxs(
   userId: string,
 ): Transaction[] {
   const lastDay = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+  const month = monthKey(cursor);
   return recurring
     .filter((r) => !isCardRecurring(r))
+    .filter((r) => recurringApplies(r, month) && !amountForMonth(r, month).voided)
     .filter(
       (r) =>
         !existing.some(
@@ -255,12 +257,13 @@ export function projectedCashTxs(
     )
     .map((r) => {
       const day = Math.min(Math.max(1, r.due_day), lastDay);
+      const priced = amountForMonth(r, month);
       return {
         id: `${PROJECTED_FIJO_PREFIX}${r.id}-${monthKey(cursor)}`,
         user_id: userId,
         type: "egreso" as const,
-        amount: Number(r.amount),
-        currency: r.currency,
+        amount: priced.amount,
+        currency: priced.currency,
         category_id: r.category_id,
         account_id: r.account_id,
         credit_card_id: null,
@@ -299,10 +302,12 @@ export function projectedCardRecurringTxs(
   fallbackCardId: string | null,
 ): Transaction[] {
   const lastDay = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+  const month = monthKey(cursor);
   const extra: Transaction[] = [];
   for (const item of recurring) {
     if (!isCardRecurring(item)) continue;
     if (item.frequency === "anual") continue;
+    if (!recurringApplies(item, month) || amountForMonth(item, month).voided) continue;
     const via = recurringVia(item);
     const cardId =
       (via.cardId && cards.some((card) => card.id === via.cardId) ? via.cardId : null) ?? fallbackCardId;
@@ -332,12 +337,13 @@ export function projectedCardRecurringTxs(
     }
     for (const day of days) {
       if (covered.has(day)) continue;
+      const priced = amountForMonth(item, month);
       extra.push({
         id: `${PROJECTED_FIJO_PREFIX}${item.id}-${monthKey(cursor)}-${day}`,
         user_id: userId,
         type: "egreso",
-        amount: Number(item.amount),
-        currency: item.currency,
+        amount: priced.amount,
+        currency: priced.currency,
         category_id: item.category_id,
         account_id: null,
         credit_card_id: cardId,
