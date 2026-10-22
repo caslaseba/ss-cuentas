@@ -21,6 +21,7 @@ import { useMonthView } from "@/hooks/use-month-view";
 import { parseCloseOn, shortMonth } from "@/lib/finance/close-cycle";
 import { planIdFromProjectedCuota } from "@/lib/finance/installment-drop";
 import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
+import { monthIncomeSplit } from "@/lib/finance/month-brief";
 import { cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
@@ -69,10 +70,12 @@ function ResumenInner() {
     periodEnd,
     laterStart,
     laterEnd,
-    cardHitsNow,
     cardHitsNext,
     cardHitsLater,
     cardDue,
+    visaMia,
+    visaPapa,
+    tarjetaAbierta,
     canGoPrev,
     salaryMonthFor,
     saveMonthClose,
@@ -205,6 +208,10 @@ function ResumenInner() {
     );
 
   const nextName = format(shiftMonth(cursor, 1), "MMMM", { locale: es });
+  const income = monthIncomeSplit(transactions, categories, toArs, cursor);
+  const sueldoMes = estimated && income.sueldo <= 0 ? wallet.cobrado : income.sueldo;
+  const ingresosMes = estimated ? 0 : income.ingresos;
+  const masked = (amount: number) => (hideSueldo ? "••••••" : formatMoney(amount, "ARS"));
   const laterName = format(shiftMonth(cursor, 2), "MMMM", { locale: es });
   const periodOk = periodStart <= periodEnd;
 
@@ -446,13 +453,7 @@ function ResumenInner() {
               {hideSueldo ? "••••••" : formatMoney(wallet.queda, "ARS")}
             </p>
             <p className="text-[11px] text-muted-foreground">
-              {hideSueldo
-                ? "Plata de este mes, más la tarjeta que cae ahora"
-                : `Plata ${formatMoney(wallet.gastadoContado, "ARS")}${
-                    cardHitsNow > 0
-                      ? ` · Tarjeta ${formatMoney(cardHitsNow, "ARS")}`
-                      : " · la tarjeta de ahora cae el mes que viene"
-                  }`}
+              Sueldo, ingresos, las dos tarjetas y la transferencia, abajo.
             </p>
           </div>
           <Button
@@ -467,6 +468,54 @@ function ResumenInner() {
           </Button>
         </div>
       </div>
+
+      <section className="rounded-md border border-border px-2 py-2">
+        <h2 className="text-xs font-medium">Resumen</h2>
+        <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="min-w-0">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Entra</p>
+            <p className="mt-1 flex items-baseline justify-between gap-2 text-[11px]">
+              <span>Sueldo{estimated ? " estimado" : ""}</span>
+              <span className="font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">{masked(sueldoMes)}</span>
+            </p>
+            <p className="flex items-baseline justify-between gap-2 text-[11px]">
+              <span>Ingresos</span>
+              <span className="font-semibold tabular-nums">{ingresosMes > 0 ? masked(ingresosMes) : "—"}</span>
+            </p>
+            {ingresosMes > 0 && income.detalle.length > 0 ? (
+              <p className="truncate text-[10px] text-muted-foreground">{income.detalle.slice(0, 3).join(" · ")}</p>
+            ) : (
+              <p className="text-[10px] text-muted-foreground">Además del sueldo.</p>
+            )}
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Sale</p>
+            <p className="mt-1 flex items-baseline justify-between gap-2 text-[11px]">
+              <span>Las dos tarjetas</span>
+              <span className="font-semibold tabular-nums">{formatMoney(tarjetaAbierta, "ARS")}</span>
+            </p>
+            <p className="text-[10px] leading-tight text-muted-foreground">
+              Visa mía {formatMoney(visaMia, "ARS")} · Extensión {formatMoney(visaPapa, "ARS")}
+            </p>
+            <p className="text-[10px] leading-tight text-muted-foreground">
+              {tarjetaAbierta > 0 ? `Se abonan en ${nextName}.` : "Sin consumo en las tarjetas."}
+            </p>
+            {cardDue.total > 0 ? (
+              <p className="mt-1 text-[11px] leading-tight">
+                Este mes se debitan{" "}
+                <span className="font-semibold tabular-nums">{formatMoney(cardDue.total, "ARS")}</span>
+                <span className="block text-[10px] text-muted-foreground">
+                  Visa mía {formatMoney(cardDue.visa, "ARS")} · Extensión {formatMoney(cardDue.extension, "ARS")}
+                </span>
+              </p>
+            ) : null}
+            <p className="mt-1 flex items-baseline justify-between gap-2 text-[11px]">
+              <span>Efectivo y transferencia</span>
+              <span className="font-semibold tabular-nums">{formatMoney(wallet.gastadoContado, "ARS")}</span>
+            </p>
+          </div>
+        </div>
+      </section>
 
       {isPast && !unlocked ? (
         <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
