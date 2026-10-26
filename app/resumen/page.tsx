@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { PinGate } from "@/components/entry/pin-gate";
 import { TransactionEdit } from "@/components/entry/transaction-edit";
 import { RecurringEdit } from "@/components/entry/recurring-edit";
+import { EdesurSplitDialog } from "@/components/dashboard/edesur-split";
 import { MovementRow } from "@/components/dashboard/movement-row";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -21,7 +22,8 @@ import { useMonthView } from "@/hooks/use-month-view";
 import { parseCloseOn, shortMonth } from "@/lib/finance/close-cycle";
 import { planIdFromProjectedCuota } from "@/lib/finance/installment-drop";
 import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
-import { monthIncomeSplit } from "@/lib/finance/month-brief";
+import { isEdesurName } from "@/lib/finance/edesur";
+import { monthIncomeLines, monthIncomeSplit } from "@/lib/finance/month-brief";
 import { cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { cardBillNotes, isCardBillPayment } from "@/lib/finance/tx-notes";
@@ -101,6 +103,7 @@ function ResumenInner() {
   const [payDate, setPayDate] = useState(isoDate(new Date()));
   const [payMethod, setPayMethod] = useState<PaymentMethod>("transferencia");
   const [unpayAsk, setUnpayAsk] = useState<RecurringPayment | null>(null);
+  const [edesurAsk, setEdesurAsk] = useState<RecurringPayment | null>(null);
 
   const viewedMonth = monthKey(cursor);
   const services = [...recurring]
@@ -133,7 +136,11 @@ function ResumenInner() {
       .reduce((sum, tx) => sum + toArs(Number(tx.amount), tx.currency), 0);
   }
 
-  const filteredMoves = monthMoves.filter((tx) => source === "todas" || sourceOf(tx).id === source);
+  const filteredMoves = monthMoves.filter((tx) => {
+    if (source === "ingresos") return tx.type === "ingreso";
+    if (source === "todas") return true;
+    return sourceOf(tx).id === source;
+  });
 
   const categoryRows = (() => {
     const buckets = new Map<
@@ -232,6 +239,11 @@ function ResumenInner() {
 
   const nextName = format(shiftMonth(cursor, 1), "MMMM", { locale: es });
   const income = monthIncomeSplit(transactions, categories, toArs, cursor);
+  const incomeLines = monthIncomeLines(transactions, toArs, cursor);
+  const incomeTotal = incomeLines.reduce((sum, line) => sum + line.amount, 0);
+  const edesurReceived = incomeLines
+    .filter((line) => isEdesurName(`${line.concept} ${line.note}`))
+    .reduce((sum, line) => sum + line.amount, 0);
   const sueldoMes = estimated && income.sueldo <= 0 ? wallet.cobrado : income.sueldo;
   const ingresosMes = estimated ? 0 : income.ingresos;
   const masked = (amount: number) => (hideSueldo ? "••••••" : formatMoney(amount, "ARS"));
@@ -287,12 +299,43 @@ function ResumenInner() {
     guard(() => setEditingFixed(r), isPast);
   }
 
+  function repartirKwh(r: RecurringPayment) {
+    if (!isEdesurName(r.name)) return null;
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="mt-1 h-6 w-full px-1 text-[10px]"
+        onClick={() => setEdesurAsk(r)}
+      >
+        Repartir kWh
+      </Button>
+    );
+  }
+
   function serviceCard(r: RecurringPayment) {
     const shown = shownRecurring(r, viewedMonth, transactions);
     if (!shown) return null;
     const via = recurringVia(r);
     const catName = categories.find((item) => item.id === r.category_id)?.name;
     if (shown.voided) {
+      const voidedBody = (
+        <>
+          <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
+          <p className="text-[11px] font-semibold leading-tight">Anulado</p>
+          <p className="truncate text-[9px] leading-tight text-muted-foreground">Mensual · no se descuenta</p>
+        </>
+      );
+      if (isEdesurName(r.name)) {
+        return (
+          <div key={r.id} className="rounded-md border border-dashed border-border bg-muted/40 px-1.5 py-1">
+            <button type="button" className="w-full text-left" onClick={() => selectFixed(r)}>
+              {voidedBody}
+            </button>
+            {repartirKwh(r)}
+          </div>
+        );
+      }
       return (
         <button
           key={r.id}
@@ -300,22 +343,15 @@ function ResumenInner() {
           onClick={() => selectFixed(r)}
           className="rounded-md border border-dashed border-border bg-muted/40 px-1.5 py-1 text-left"
         >
-          <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
-          <p className="text-[11px] font-semibold leading-tight">Anulado</p>
-          <p className="truncate text-[9px] leading-tight text-muted-foreground">Mensual · no se descuenta</p>
+          {voidedBody}
         </button>
       );
     }
     if (via.onCard) {
       const onCard = cardCoversRecurring(r, transactions, cursor);
       const card = cards.find((item) => item.id === via.cardId) ?? (via.cardId === papa?.id ? papa : mine);
-      return (
-        <button
-          key={r.id}
-          type="button"
-          onClick={() => selectFixed(r)}
-          className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1 text-left"
-        >
+      const body = (
+        <>
           <p className="truncate text-[11px] font-medium leading-tight">{r.name}</p>
           <p className="text-[11px] font-semibold leading-tight tabular-nums">
             {formatMoney(shown.amount, shown.currency)}
@@ -326,6 +362,26 @@ function ResumenInner() {
             {card ? labelFor(card) : "Tarjeta"}
             {onCard ? " · en resumen" : " · se debita"}
           </p>
+        </>
+      );
+      if (isEdesurName(r.name)) {
+        return (
+          <div key={r.id} className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1">
+            <button type="button" className="w-full text-left" onClick={() => selectFixed(r)}>
+              {body}
+            </button>
+            {repartirKwh(r)}
+          </div>
+        );
+      }
+      return (
+        <button
+          key={r.id}
+          type="button"
+          onClick={() => selectFixed(r)}
+          className="rounded-md border border-violet-500/30 bg-violet-500/10 px-1.5 py-1 text-left"
+        >
+          {body}
         </button>
       );
     }
@@ -377,6 +433,7 @@ function ResumenInner() {
             Deshacer
           </Button>
         ) : null}
+        {repartirKwh(r)}
       </div>
     );
   }
@@ -592,13 +649,23 @@ function ResumenInner() {
               <span className="font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">{masked(sueldoMes)}</span>
             </p>
             <p className="flex items-baseline justify-between gap-2 text-[11px]">
-              <span>Ingresos</span>
+              <span>Otros ingresos</span>
               <span className="font-semibold tabular-nums">{ingresosMes > 0 ? masked(ingresosMes) : "—"}</span>
             </p>
-            {ingresosMes > 0 && income.detalle.length > 0 ? (
-              <p className="truncate text-[10px] text-muted-foreground">{income.detalle.slice(0, 3).join(" · ")}</p>
+            {incomeLines.length > 0 ? (
+              <ul className="mt-1 space-y-0.5">
+                {incomeLines.map((line) => (
+                  <li key={line.id} className="flex items-baseline justify-between gap-2 text-[10px] text-muted-foreground">
+                    <span className="min-w-0 truncate">
+                      {dayLabel(line.on)} {line.concept}
+                      {line.note ? ` · ${line.note}` : ""}
+                    </span>
+                    <span className="shrink-0 tabular-nums">{masked(line.amount)}</span>
+                  </li>
+                ))}
+              </ul>
             ) : (
-              <p className="text-[10px] text-muted-foreground">Además del sueldo.</p>
+              <p className="text-[10px] text-muted-foreground">Todavía no hay ingresos en este mes.</p>
             )}
           </div>
           <div className="min-w-0">
@@ -723,6 +790,19 @@ function ResumenInner() {
         >
           Todas
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSource("ingresos");
+            setListOrder("fecha");
+          }}
+          className={cn(
+            "shrink-0 rounded-full border px-3 py-1 text-xs font-medium",
+            source === "ingresos" ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground",
+          )}
+        >
+          Ingresos{hideSueldo ? "" : ` ${formatMoney(incomeTotal, "ARS")}`}
+        </button>
         {chipCards.map((card) => (
           <button
             key={card.id}
@@ -792,7 +872,7 @@ function ResumenInner() {
               Tocá uno o varios. Si son de tarjeta, los descontás juntos de este sueldo.
             </p>
           ) : null}
-          {listOrder === "fecha" && source !== "plata" ? (
+          {listOrder === "fecha" && source !== "plata" && source !== "ingresos" ? (
             <p className="text-[10px] text-muted-foreground">
               Tarjetas del {dayLabel(prevClose)} al {dayLabel(closeOn)}, el cierre anterior inclusive.
             </p>
@@ -934,7 +1014,9 @@ function ResumenInner() {
           )}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">Nada en este mes para ese filtro.</p>
+        <p className="text-sm text-muted-foreground">
+          {source === "ingresos" ? "Este mes no tiene ingresos." : "Nada en este mes para ese filtro."}
+        </p>
       )}
 
       {services.length > 0 || cardDue.total > 0 || cardPaid ? (
@@ -1003,6 +1085,16 @@ function ResumenInner() {
         onOpenChange={(v) => !v && setEditingFixed(null)}
       />
       <PinGate open={askPin} error={pinError} onClose={closePin} onSubmit={submitPin} />
+      <EdesurSplitDialog
+        open={Boolean(edesurAsk)}
+        onOpenChange={(open) => !open && setEdesurAsk(null)}
+        billAmount={
+          edesurAsk
+            ? (shownRecurring(edesurAsk, viewedMonth, transactions)?.amount ?? Number(edesurAsk.amount))
+            : 0
+        }
+        received={edesurReceived}
+      />
 
       {picking ? (
         <div className="fixed inset-x-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-30 border-t bg-background/95 px-3 py-2 backdrop-blur">

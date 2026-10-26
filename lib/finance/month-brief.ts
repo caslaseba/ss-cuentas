@@ -1,4 +1,5 @@
 import type { Category, Transaction } from "@/lib/types";
+import { observationOf } from "@/lib/finance/tx-notes";
 import { inCurrentMonth } from "@/lib/finance/wallet";
 
 function fold(value: string) {
@@ -45,4 +46,31 @@ export function monthIncomeSplit(
   }
   const detalle = [...names.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
   return { sueldo, ingresos, detalle };
+}
+
+export type IncomeLine = {
+  id: string;
+  on: string;
+  concept: string;
+  note: string;
+  amount: number;
+};
+
+/** Cada ingreso del mes, sueldo incluido. */
+export function monthIncomeLines(
+  transactions: Transaction[],
+  toArs: (amount: number, currency: Transaction["currency"]) => number,
+  month: Date,
+): IncomeLine[] {
+  return transactions
+    .filter((tx) => tx.type === "ingreso" && inCurrentMonth(tx.occurred_on, month))
+    .map((tx) => ({
+      id: tx.id,
+      on: tx.occurred_on,
+      concept: tx.concept.trim() || "Ingreso",
+      note: observationOf(tx.notes),
+      amount: toArs(Number(tx.amount), tx.currency),
+    }))
+    .filter((line) => Number.isFinite(line.amount))
+    .sort((a, b) => b.on.localeCompare(a.on) || a.concept.localeCompare(b.concept, "es"));
 }
