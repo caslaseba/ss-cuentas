@@ -56,7 +56,13 @@ export function MovementSearch({
         : transactions,
     [filters.monthOnly, thisMonth, transactions],
   );
-  const hits = useMemo(() => filterTransactions(pool, categories, filters), [pool, categories, filters]);
+  const hits = useMemo(
+    () =>
+      filterTransactions(pool, categories, filters).sort(
+        (a, b) => b.occurred_on.localeCompare(a.occurred_on) || a.concept.localeCompare(b.concept, "es"),
+      ),
+    [pool, categories, filters],
+  );
   const totals = useMemo(() => searchTotals(hits, toArs), [hits, toArs]);
   const groups = useMemo(() => {
     const set = new Set<string>();
@@ -90,7 +96,7 @@ export function MovementSearch({
         autoFocus
         value={filters.query}
         onChange={(e) => patch({ query: e.target.value })}
-        placeholder="Nombre, categoría o 4665…"
+        placeholder="Nombre, 19/10, 19 de octubre o 4665…"
       />
       <div className="flex flex-wrap gap-1">
         <Toggle on={filters.inName} label="Nombre" onClick={() => patch({ inName: !filters.inName })} />

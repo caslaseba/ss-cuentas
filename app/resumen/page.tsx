@@ -87,6 +87,7 @@ function ResumenInner() {
   const [hideSueldo, setHideSueldo] = useState(true);
   const [openCats, setOpenCats] = useState<string[]>([]);
   const [source, setSource] = useState("todas");
+  const [listOrder, setListOrder] = useState<"fecha" | "categoria" | "monto">("monto");
 
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [editingFixed, setEditingFixed] = useState<RecurringPayment | null>(null);
@@ -158,8 +159,21 @@ function ResumenInner() {
       row.txs.push(tx);
       buckets.set(name, row);
     }
-    return [...buckets.values()].sort((a, b) => Math.max(b.total, b.ingreso) - Math.max(a.total, a.ingreso));
+    return [...buckets.values()].sort((a, b) => {
+      if (listOrder === "categoria") return a.name.localeCompare(b.name, "es", { sensitivity: "base" });
+      return Math.max(b.total, b.ingreso) - Math.max(a.total, a.ingreso);
+    });
   })();
+
+  const datedMoves = [...filteredMoves].sort(
+    (a, b) => b.occurred_on.localeCompare(a.occurred_on) || a.concept.localeCompare(b.concept, "es"),
+  );
+  const dateGroups = datedMoves.reduce<{ day: string; txs: Transaction[] }[]>((groups, tx) => {
+    const last = groups[groups.length - 1];
+    if (last?.day === tx.occurred_on) last.txs.push(tx);
+    else groups.push({ day: tx.occurred_on, txs: [tx] });
+    return groups;
+  }, []);
 
   function splitLine(txs: Transaction[]) {
     const sums = new Map<string, { label: string; amount: number; order: number }>();
@@ -193,6 +207,9 @@ function ResumenInner() {
       const group = groups.get(src.id) ?? { label: src.label, order, txs: [] };
       group.txs.push(tx);
       groups.set(src.id, group);
+    }
+    for (const group of groups.values()) {
+      group.txs.sort((a, b) => b.occurred_on.localeCompare(a.occurred_on) || a.concept.localeCompare(b.concept, "es"));
     }
     return [...groups.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, "es"));
   }
@@ -628,7 +645,53 @@ function ResumenInner() {
 
       {categoryRows.length > 0 ? (
         <div className="space-y-1.5">
-          <h2 className="text-xs font-medium">Categorías</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-xs font-medium">{listOrder === "fecha" ? "Por fecha" : "Categorías"}</h2>
+            <div className="flex gap-1">
+              {(
+                [
+                  ["fecha", "Fecha"],
+                  ["categoria", "Categoría"],
+                  ["monto", "Monto"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setListOrder(id)}
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                    listOrder === id ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {listOrder === "fecha" ? (
+            <div className="space-y-2">
+              {dateGroups.map((group) => (
+                <div key={group.day} className="space-y-1">
+                  <p className="text-[10px] font-medium capitalize text-muted-foreground">
+                    {format(parseISO(group.day), "EEEE d 'de' MMMM", { locale: es })}
+                  </p>
+                  {group.txs.map((tx) => (
+                    <MovementRow
+                      key={tx.id}
+                      tx={tx}
+                      categories={categories}
+                      cards={cards}
+                      installments={installments}
+                      tag={rhythmOf(tx)}
+                      onSelect={selectTx}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {listOrder === "fecha" ? null : (
           <div className="space-y-1">
             {categoryRows.map((row) => {
               const open = openCats.includes(row.name);
@@ -697,6 +760,7 @@ function ResumenInner() {
               );
             })}
           </div>
+          )}
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">Nada en este mes para ese filtro.</p>

@@ -1,4 +1,5 @@
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
+import { occurredOnMatches, parseDateQuery } from "@/lib/finance/date-query";
 import { groupCategory } from "@/lib/finance/style";
 import { observationOf } from "@/lib/finance/tx-notes";
 import type { Category, Transaction } from "@/lib/types";
@@ -69,6 +70,7 @@ export function filterTransactions(list: Transaction[], categories: Category[], 
   const useCat = !anyField || filters.inCategory;
   const useAmt = !anyField || filters.inAmount;
   const catSet = new Set(filters.categoryNames);
+  const dateQuery = parseDateQuery(q);
 
   return list.filter((tx) => {
     if (filters.type !== "todos" && tx.type !== filters.type) return false;
@@ -80,7 +82,8 @@ export function filterTransactions(list: Transaction[], categories: Category[], 
       if (!catSet.has(groupCategory(raw))) return false;
     }
     if (!q) return true;
-    if (useAmt && qDigits && amountMatchesQuery(Number(tx.amount), q)) return true;
+    if (dateQuery && occurredOnMatches(tx.occurred_on, dateQuery)) return true;
+    if (useAmt && qDigits && !dateQuery && amountMatchesQuery(Number(tx.amount), q)) return true;
     if (useName && nameHay(tx).includes(qNorm)) return true;
     if (useCat && categoryHay(tx, categories).includes(qNorm)) return true;
     return false;
