@@ -43,3 +43,11 @@ export function notesHasLine(notes: string | null | undefined, line: string) {
 export function isLeftoverTx(notes: string | null | undefined) {
   return notesLines(notes).some((l) => l.startsWith("sobra:"));
 }
+
+export function cardBillNote(month: string) {
+  return `tarjeta-total:${month}`;
+}
+
+export function isCardBillPayment(notes: string | null | undefined, month?: string) {
+  return notesLines(notes).some((line) => (month ? line === cardBillNote(month) : line.startsWith("tarjeta-total:")));
+}

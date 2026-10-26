@@ -24,6 +24,7 @@ import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/m
 import { monthIncomeSplit } from "@/lib/finance/month-brief";
 import { cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
+import { cardBillNote, isCardBillPayment } from "@/lib/finance/tx-notes";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
 import { cn, formatMoney, isoDate, monthKey } from "@/lib/utils";
 import type { CreditCard, PaymentMethod, RecurringPayment, Transaction } from "@/lib/types";
@@ -92,6 +93,7 @@ function ResumenInner() {
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [editingFixed, setEditingFixed] = useState<RecurringPayment | null>(null);
   const [payAsk, setPayAsk] = useState<RecurringPayment | null>(null);
+  const [cardPayAsk, setCardPayAsk] = useState(false);
   const [payDate, setPayDate] = useState(isoDate(new Date()));
   const [payMethod, setPayMethod] = useState<PaymentMethod>("transferencia");
   const [unpayAsk, setUnpayAsk] = useState<RecurringPayment | null>(null);
@@ -375,6 +377,16 @@ function ResumenInner() {
     );
   }
 
+  function dateInViewedMonth(iso: string) {
+    if (iso.slice(0, 7) === viewedMonth) return iso;
+    const day = Math.min(28, Math.max(1, Number(iso.slice(8, 10)) || 1));
+    return `${viewedMonth}-${String(day).padStart(2, "0")}`;
+  }
+
+  const cardPayment = transactions.find(
+    (tx) => tx.type === "egreso" && tx.payment_method !== "tarjeta_credito" && isCardBillPayment(tx.notes, viewedMonth),
+  );
+
   async function confirmPay() {
     if (!payAsk) return;
     const r = payAsk;
@@ -389,12 +401,42 @@ function ResumenInner() {
         concept: r.name,
         payment_method: payMethod,
         category_id: r.category_id,
-        occurred_on: payDate || isoDate(new Date()),
+        occurred_on: dateInViewedMonth(payDate || isoDate(new Date())),
         source: "recurrente",
       });
-      toast.success(`Marcado pagado: ${r.name}`);
+      toast.success(`Marcado pagado: ${r.name}. Descuenta el sueldo de este mes.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo marcar pagado");
+    }
+  }
+
+  async function confirmCardPay() {
+    if (cardDue.total <= 0 || cardPayment) return;
+    setCardPayAsk(false);
+    try {
+      await saveTransaction({
+        type: "egreso",
+        amount: cardDue.total,
+        currency: "ARS",
+        concept: "TARJETA TOTAL",
+        payment_method: "transferencia",
+        occurred_on: dateInViewedMonth(payDate || isoDate(new Date())),
+        notes: cardBillNote(viewedMonth),
+        source: "manual",
+      });
+      toast.success("Tarjeta pagada. Descuenta el sueldo de este mes.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo marcar la tarjeta");
+    }
+  }
+
+  async function confirmCardUnpay() {
+    if (!cardPayment) return;
+    try {
+      await deleteTransaction(cardPayment.id);
+      toast.success("Pago de la tarjeta anulado");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo deshacer");
     }
   }
 
@@ -515,20 +557,29 @@ function ResumenInner() {
               Visa mía {formatMoney(visaMia, "ARS")} · Extensión {formatMoney(visaPapa, "ARS")}
             </p>
             <p className="text-[10px] leading-tight text-muted-foreground">
-              {tarjetaAbierta > 0 ? `Se abonan en ${nextName}.` : "Sin consumo en las tarjetas."}
+              {tarjetaAbierta > 0
+                ? `Del ${dayLabel(prevClose)} al ${dayLabel(closeOn)}. Se abonan en ${nextName}.`
+                : "Sin consumo en las tarjetas."}
             </p>
             {cardDue.total > 0 ? (
               <p className="mt-1 text-[11px] leading-tight">
-                Este mes se debitan{" "}
-                <span className="font-semibold tabular-nums">{formatMoney(cardDue.total, "ARS")}</span>
+                {cardPayment ? "Tarjeta del mes anterior pagada " : "Tarjeta del mes anterior "}
+                <span className="font-semibold tabular-nums">
+                  {formatMoney(cardPayment ? Number(cardPayment.amount) : cardDue.total, "ARS")}
+                </span>
                 <span className="block text-[10px] text-muted-foreground">
-                  Visa mía {formatMoney(cardDue.visa, "ARS")} · Extensión {formatMoney(cardDue.extension, "ARS")}
+                  {cardPayment
+                    ? "Ya descuenta el sueldo de este mes."
+                    : "Cuando la pagues, descuenta el sueldo de este mes."}
                 </span>
               </p>
             ) : null}
             <p className="mt-1 flex items-baseline justify-between gap-2 text-[11px]">
               <span>Efectivo y transferencia</span>
               <span className="font-semibold tabular-nums">{formatMoney(wallet.gastadoContado, "ARS")}</span>
+            </p>
+            <p className="text-[10px] leading-tight text-muted-foreground">
+              Transferencias y mensuales ya pagados descuentan este sueldo.
             </p>
           </div>
         </div>
@@ -588,7 +639,7 @@ function ResumenInner() {
           </div>
           {periodOk ? (
             <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-              Del {dayLabel(periodStart)} al {dayLabel(periodEnd)} lo ves en el mes del consumo y descuenta en {nextName}.
+              Del {dayLabel(prevClose)} al {dayLabel(closeOn)} es el período de las tarjetas. Se abona en {nextName}.
             </p>
           ) : (
             <p className="mt-1.5 text-[11px] leading-snug text-destructive">
@@ -669,6 +720,11 @@ function ResumenInner() {
               ))}
             </div>
           </div>
+          {listOrder === "fecha" && source !== "plata" ? (
+            <p className="text-[10px] text-muted-foreground">
+              Tarjetas del {dayLabel(prevClose)} al {dayLabel(closeOn)}, el cierre anterior inclusive.
+            </p>
+          ) : null}
           {listOrder === "fecha" ? (
             <div className="space-y-2">
               {dateGroups.map((group) => (
@@ -766,24 +822,57 @@ function ResumenInner() {
         <p className="text-sm text-muted-foreground">Nada en este mes para ese filtro.</p>
       )}
 
-      {services.length > 0 || cardDue.total > 0 ? (
+      {services.length > 0 || cardDue.total > 0 || cardPayment ? (
         <div className="space-y-1.5 pb-4">
           <h2 className="text-xs font-medium">Mensual</h2>
           <p className="text-[11px] text-muted-foreground">
             Siguen en su categoría. Acá los marcás pagados. El total de la tarjeta cae en el mes en que se abona.
           </p>
           <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-            {cardDue.total > 0 ? (
-              <div className="rounded-md border border-violet-500/40 bg-violet-500/10 px-1.5 py-1">
+            {cardDue.total > 0 || cardPayment ? (
+              <div
+                className={cn(
+                  "rounded-md border px-1.5 py-1",
+                  cardPayment ? "border-emerald-500/40 bg-emerald-500/10" : "border-violet-500/40 bg-violet-500/10",
+                )}
+              >
                 <p className="truncate text-[11px] font-medium leading-tight">TARJETA TOTAL</p>
-                <p className="text-[11px] font-semibold leading-tight tabular-nums">{formatMoney(cardDue.total, "ARS")}</p>
+                <p className="text-[11px] font-semibold leading-tight tabular-nums">
+                  {formatMoney(cardPayment ? Number(cardPayment.amount) : cardDue.total, "ARS")}
+                </p>
                 <p className="text-[9px] leading-tight text-muted-foreground">
                   Visa mía {formatMoney(cardDue.visa, "ARS")}
                 </p>
                 <p className="text-[9px] leading-tight text-muted-foreground">
                   Extensión {formatMoney(cardDue.extension, "ARS")}
                 </p>
-                <p className="text-[9px] leading-tight text-muted-foreground">Mensual · se abona este mes</p>
+                <p className="text-[9px] leading-tight text-muted-foreground">
+                  {cardPayment ? "Pagada · descuenta este sueldo" : "Mes anterior · se paga este mes"}
+                </p>
+                {!isFuture && !cardPayment ? (
+                  <Button
+                    size="sm"
+                    className="mt-1 h-6 w-full px-1 text-[10px]"
+                    onClick={() =>
+                      guard(() => {
+                        setPayDate(dateInViewedMonth(isoDate(new Date())));
+                        setCardPayAsk(true);
+                      }, isPast)
+                    }
+                  >
+                    Pagué
+                  </Button>
+                ) : null}
+                {cardPayment ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-1 h-6 w-full px-1 text-[10px]"
+                    onClick={() => guard(() => void confirmCardUnpay(), isPast)}
+                  >
+                    Deshacer
+                  </Button>
+                ) : null}
               </div>
             ) : null}
             {services.map((item) => serviceCard(item))}
@@ -799,6 +888,30 @@ function ResumenInner() {
         onOpenChange={(v) => !v && setEditingFixed(null)}
       />
       <PinGate open={askPin} error={pinError} onClose={closePin} onSubmit={submitPin} />
+
+      <Dialog open={cardPayAsk} onOpenChange={setCardPayAsk}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>¿Pagaste las dos tarjetas?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Se descuentan {formatMoney(cardDue.total, "ARS")} del sueldo de este mes. Visa mía{" "}
+            {formatMoney(cardDue.visa, "ARS")} y Extensión {formatMoney(cardDue.extension, "ARS")}.
+          </p>
+          <div className="mt-3">
+            <Label>Fecha del pago</Label>
+            <Input className="mt-1.5" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+          </div>
+          <div className="mt-4 flex gap-2">
+            <Button className="flex-1" onClick={() => void confirmCardPay()}>
+              Sí, pagué
+            </Button>
+            <Button className="flex-1" variant="outline" onClick={() => setCardPayAsk(false)}>
+              Cancelar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(payAsk)} onOpenChange={(v) => !v && setPayAsk(null)}>
         <DialogContent>

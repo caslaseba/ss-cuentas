@@ -13,7 +13,6 @@ import {
 } from "@/lib/finance/settlement";
 import {
   PROJECTED_FIJO_PREFIX,
-  cardChargesInMonth,
   cardRefForMonth,
   cashMonthMoves,
   cashMonthSpend,
@@ -103,10 +102,23 @@ export function useMonthView(initial?: Date) {
   }
 
   function pool(monthCursor: Date) {
+    const start = closeOf(shiftMonth(monthCursor, -1));
+    const end = closeOf(monthCursor);
+    const inPeriod = (iso: string) => Boolean(start && end && start <= end && iso >= start && iso <= end);
+    const real = transactions.filter(
+      (tx) =>
+        tx.type === "egreso" &&
+        tx.payment_method === "tarjeta_credito" &&
+        tx.credit_card_id != null &&
+        cardIds.has(tx.credit_card_id) &&
+        inPeriod(tx.occurred_on),
+    );
     return uniqueById([
-      ...cardChargesInMonth(transactions, monthCursor, cardIds),
-      ...projectFor(monthCursor),
-      ...projectedCardRecurringTxs(recurring, transactions, cards, monthCursor, profile?.id ?? "", mine?.id ?? null),
+      ...real,
+      ...projectFor(monthCursor).filter((tx) => inPeriod(tx.occurred_on)),
+      ...projectedCardRecurringTxs(recurring, transactions, cards, monthCursor, profile?.id ?? "", mine?.id ?? null).filter(
+        (tx) => inPeriod(tx.occurred_on),
+      ),
     ]);
   }
 
@@ -165,8 +177,7 @@ export function useMonthView(initial?: Date) {
   const previousMonth = shiftMonth(cursor, -1);
   const previousInBooks = monthKey(previousMonth) >= BOOKS_START_MONTH;
   const prevWallet = monthWallet(transactions, toArs, previousMonth);
-  const prevCardHit = previousInBooks ? cardSum(hitsSalary(previousMonth)) : 0;
-  const leftover = previousInBooks ? Math.max(0, prevWallet.cobrado - prevWallet.gastadoContado - prevCardHit) : 0;
+  const leftover = previousInBooks ? Math.max(0, prevWallet.cobrado - prevWallet.gastadoContado) : 0;
   const alreadyCarried = hasCarryOver(transactions, cursor);
   const canGoNext = startOfMonth(cursor).getTime() < startOfMonth(shiftMonth(now, 12)).getTime();
 
@@ -195,7 +206,7 @@ export function useMonthView(initial?: Date) {
   const extraFijos = (isFuture ? projectedFijos : []).reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
   const cobrado = isFuture && wallet.cobrado <= 0 ? typicalSalary : wallet.cobrado;
   const gastadoContado = wallet.gastadoContado + extraFijos;
-  const queda = cobrado - gastadoContado - cardHitsNow;
+  const queda = cobrado - gastadoContado;
   const quedaSiPagaVisa = queda;
   const estimated = isFuture && wallet.cobrado <= 0;
   const sealed = monthIsSealed(cursor, now, monthStatement?.cycle, recurring, transactions);
