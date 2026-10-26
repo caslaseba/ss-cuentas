@@ -28,6 +28,9 @@ import {
   withRecurringVia,
 } from "@/lib/finance/recurring";
 import type { CardMonthClose } from "@/lib/finance/close-cycle";
+import type { EdesurMonth } from "@/lib/finance/edesur";
+import { withEdesurMonth } from "@/lib/finance/edesur";
+import { loadEdesurMonths, persistEdesurMonths } from "@/lib/finance/edesur-store";
 import { loadMonthCloses, persistMonthCloses, withMonthClose } from "@/lib/finance/month-closes";
 import { withTimeout } from "@/lib/async";
 import { isoDate, monthKey } from "@/lib/utils";
@@ -121,6 +124,8 @@ type FinanceContextValue = {
   updateCategoryLimit: (id: string, monthly_limit: number | null) => Promise<void>;
   monthCloses: CardMonthClose[];
   saveMonthClose: (cardId: string, month: string, closingOn: string) => Promise<void>;
+  edesurMonths: EdesurMonth[];
+  saveEdesurMonth: (input: EdesurMonth) => Promise<void>;
 };
 
 type BootstrapBody = {
@@ -159,6 +164,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [recurring, setRecurring] = useState<RecurringPayment[]>([]);
   const [monthCloses, setMonthCloses] = useState<CardMonthClose[]>([]);
+  const [edesurMonths, setEdesurMonths] = useState<EdesurMonth[]>([]);
 
   const applySnap = useCallback((snap: FinanceSnapshot) => {
     booksRef.current = snap;
@@ -170,6 +176,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     setInstallments(snap.installments);
     setRecurring(snap.recurring);
     setMonthCloses(snap.monthCloses ?? []);
+    setEdesurMonths(snap.edesurMonths ?? []);
     writeFinanceSnapshot(snap);
   }, []);
 
@@ -325,6 +332,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         setInstallments(cachedNow.installments);
         setRecurring(cachedNow.recurring);
         setMonthCloses(cachedNow.monthCloses ?? []);
+        setEdesurMonths(cachedNow.edesurMonths ?? []);
         setLoading(false);
       }
 
@@ -363,15 +371,22 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       setCards(merged.cards);
       setTransactions(merged.transactions);
       let closes = cachedNow?.monthCloses ?? [];
+      let savedEdesur = cachedNow?.edesurMonths ?? [];
       try {
         closes = await loadMonthCloses(supabase, body.userId);
       } catch {
         closes = cachedNow?.monthCloses ?? [];
       }
-      const stored = { ...merged, monthCloses: closes };
+      try {
+        savedEdesur = await loadEdesurMonths(supabase, body.userId);
+      } catch {
+        savedEdesur = cachedNow?.edesurMonths ?? [];
+      }
+      const stored = { ...merged, monthCloses: closes, edesurMonths: savedEdesur };
       setInstallments(stored.installments);
       setRecurring(stored.recurring);
       setMonthCloses(closes);
+      setEdesurMonths(savedEdesur);
       booksRef.current = stored;
       setPendingSync(pending.length);
       writeFinanceSnapshot(stored);
@@ -1359,6 +1374,24 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     await persistMonthCloses(supabase, user.id, next);
   };
 
+  const saveEdesurMonth: FinanceContextValue["saveEdesurMonth"] = async (input) => {
+    const next = withEdesurMonth(edesurMonths, input);
+    if (!supabase) {
+      applySnap({ ...currentBooks(), edesurMonths: next });
+      return;
+    }
+    setEdesurMonths(next);
+    const base = booksRef.current ?? readFinanceSnapshot();
+    if (base) {
+      const stored = { ...base, edesurMonths: next };
+      booksRef.current = stored;
+      writeFinanceSnapshot(stored);
+    }
+    const user = await currentUser();
+    if (!user) throw new Error("Sin sesión");
+    await persistEdesurMonths(supabase, user.id, next);
+  };
+
   const primaryAccount = findIcbcAccount(accounts) ?? accounts[0] ?? null;
   const mpAccount = findMpAccount(accounts);
   const icbcAccount = findIcbcAccount(accounts);
@@ -1406,6 +1439,8 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         updateCategoryLimit,
         monthCloses,
         saveMonthClose,
+        edesurMonths,
+        saveEdesurMonth,
       }}
     >
       {children}

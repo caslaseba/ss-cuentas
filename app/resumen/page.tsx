@@ -22,7 +22,7 @@ import { useMonthView } from "@/hooks/use-month-view";
 import { parseCloseOn, shortMonth } from "@/lib/finance/close-cycle";
 import { planIdFromProjectedCuota } from "@/lib/finance/installment-drop";
 import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
-import { isEdesurName } from "@/lib/finance/edesur";
+import { brotherSettlement, isEdesurName, splitBillByKwh, type EdesurMonth } from "@/lib/finance/edesur";
 import { monthIncomeLines, monthIncomeSplit } from "@/lib/finance/month-brief";
 import { cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
@@ -85,6 +85,8 @@ function ResumenInner() {
     salaryMonthFor,
     saveMonthClose,
     cycleCard,
+    edesurMonths,
+    saveEdesurMonth,
   } = view;
   const { unlocked, askPin, pinError, guard, submitPin, closePin } = useEditGate();
   const dropInstallment = useDropInstallment();
@@ -244,6 +246,17 @@ function ResumenInner() {
   const edesurReceived = incomeLines
     .filter((line) => isEdesurName(`${line.concept} ${line.note}`))
     .reduce((sum, line) => sum + line.amount, 0);
+  const savedEdesur = edesurMonths.find((item) => item.month === viewedMonth) ?? null;
+  const edesurSplit = savedEdesur
+    ? splitBillByKwh({
+        totalKwh: savedEdesur.totalKwh,
+        totalBill: savedEdesur.totalBill,
+        mineKwh: savedEdesur.mineKwh,
+        brotherKwh: savedEdesur.brotherKwh,
+      })
+    : null;
+  const edesurBalance = edesurSplit ? brotherSettlement(edesurSplit.brother, edesurReceived) : null;
+  const monthName = format(cursor, "MMMM", { locale: es });
   const sueldoMes = estimated && income.sueldo <= 0 ? wallet.cobrado : income.sueldo;
   const ingresosMes = estimated ? 0 : income.ingresos;
   const masked = (amount: number) => (hideSueldo ? "••••••" : formatMoney(amount, "ARS"));
@@ -297,6 +310,26 @@ function ResumenInner() {
 
   function selectFixed(r: RecurringPayment) {
     guard(() => setEditingFixed(r), isPast);
+  }
+
+  function edesurLine(name: string) {
+    if (!isEdesurName(name) || !edesurSplit || !edesurBalance) return null;
+    const status =
+      edesurBalance.kind === "cubierto"
+        ? "cubrió su parte"
+        : edesurBalance.kind === "demas"
+          ? `pasó de más ${formatMoney(edesurBalance.amount, "ARS")}`
+          : `le faltan ${formatMoney(edesurBalance.amount, "ARS")}`;
+    return (
+      <p className="text-[9px] leading-tight text-muted-foreground">
+        Yo {formatMoney(edesurSplit.mine, "ARS")} · Hermano {formatMoney(edesurSplit.brother, "ARS")} · {status}
+      </p>
+    );
+  }
+
+  async function saveEdesur(input: Pick<EdesurMonth, "totalKwh" | "totalBill" | "mineKwh" | "brotherKwh">) {
+    await saveEdesurMonth({ month: viewedMonth, ...input });
+    toast.success(`Reparto de EDESUR guardado en ${monthName}`);
   }
 
   function repartirKwh(r: RecurringPayment) {
@@ -362,6 +395,7 @@ function ResumenInner() {
             {card ? labelFor(card) : "Tarjeta"}
             {onCard ? " · en resumen" : " · se debita"}
           </p>
+          {edesurLine(r.name)}
         </>
       );
       if (isEdesurName(r.name)) {
@@ -407,6 +441,7 @@ function ResumenInner() {
               ? `PAGADO${linked ? ` ${format(parseISO(linked.occurred_on), "d/M")}` : ""}`
               : `Día ${r.due_day}`}
           </p>
+          {edesurLine(r.name)}
         </button>
         {!isFuture && !isPaid ? (
           <Button
@@ -705,6 +740,37 @@ function ResumenInner() {
           </div>
         </div>
       </section>
+
+      {edesurSplit && edesurBalance ? (
+        <section className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-2">
+          <h2 className="text-xs font-medium">Tu hermano · EDESUR de {monthName}</h2>
+          <p className="mt-1 flex items-baseline justify-between gap-2 text-[11px]">
+            <span>Le corresponde</span>
+            <span className="font-semibold tabular-nums">{formatMoney(edesurSplit.brother, "ARS")}</span>
+          </p>
+          <p className="flex items-baseline justify-between gap-2 text-[11px]">
+            <span>Ya te pasó</span>
+            <span className="font-semibold tabular-nums">{formatMoney(edesurReceived, "ARS")}</span>
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            {edesurBalance.kind === "cubierto"
+              ? "Con eso cubre su parte de este mes."
+              : edesurBalance.kind === "demas"
+                ? `Te pasó ${formatMoney(edesurBalance.amount, "ARS")} de más en este mes.`
+                : `Le faltan ${formatMoney(edesurBalance.amount, "ARS")} de este mes.`}
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            {savedEdesur ? `${savedEdesur.mineKwh.toLocaleString("es-AR")} kWh tuyos y ${savedEdesur.brotherKwh.toLocaleString("es-AR")} kWh de él, sobre ${savedEdesur.totalKwh.toLocaleString("es-AR")} kWh.` : null}
+          </p>
+        </section>
+      ) : edesurReceived > 0 ? (
+        <section className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-2">
+          <h2 className="text-xs font-medium">Tu hermano · EDESUR de {monthName}</h2>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Ya te entró {formatMoney(edesurReceived, "ARS")}. El reparto de esta factura todavía no está guardado.
+          </p>
+        </section>
+      ) : null}
 
       {isPast && !unlocked ? (
         <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
@@ -1088,12 +1154,15 @@ function ResumenInner() {
       <EdesurSplitDialog
         open={Boolean(edesurAsk)}
         onOpenChange={(open) => !open && setEdesurAsk(null)}
+        monthLabel={monthName}
         billAmount={
           edesurAsk
             ? (shownRecurring(edesurAsk, viewedMonth, transactions)?.amount ?? Number(edesurAsk.amount))
             : 0
         }
         received={edesurReceived}
+        saved={savedEdesur}
+        onSave={saveEdesur}
       />
 
       {picking ? (

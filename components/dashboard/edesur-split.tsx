@@ -1,34 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
-import { splitBillByKwh } from "@/lib/finance/edesur";
+import { brotherSettlement, splitBillByKwh, type EdesurMonth } from "@/lib/finance/edesur";
 import { formatMoney } from "@/lib/utils";
-
-const STORAGE_KEY = "ss-cuentas-edesur-kwh";
-
-type Draft = { totalKwh: string; bill: string; mine: string; brother: string };
-
-function readDraft(): Draft | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<Draft>;
-    return {
-      totalKwh: String(parsed.totalKwh ?? ""),
-      bill: String(parsed.bill ?? ""),
-      mine: String(parsed.mine ?? ""),
-      brother: String(parsed.brother ?? ""),
-    };
-  } catch {
-    return null;
-  }
-}
 
 function kwhText(value: number) {
   const rounded = Math.round(value * 100) / 100;
@@ -38,37 +18,40 @@ function kwhText(value: number) {
 export function EdesurSplitDialog({
   open,
   onOpenChange,
+  monthLabel,
   billAmount,
   received,
+  saved,
+  onSave,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  monthLabel: string;
   billAmount: number;
   received: number;
+  saved: EdesurMonth | null;
+  onSave: (input: Pick<EdesurMonth, "totalKwh" | "totalBill" | "mineKwh" | "brotherKwh">) => Promise<void>;
 }) {
   const [totalKwh, setTotalKwh] = useState("");
   const [bill, setBill] = useState("");
   const [mine, setMine] = useState("");
   const [brother, setBrother] = useState("");
-  const [ready, setReady] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!open) {
-      setReady(false);
+    if (!open) return;
+    if (saved) {
+      setTotalKwh(formatAmountFromNumber(saved.totalKwh));
+      setBill(formatAmountFromNumber(saved.totalBill));
+      setMine(formatAmountFromNumber(saved.mineKwh));
+      setBrother(formatAmountFromNumber(saved.brotherKwh));
       return;
     }
-    const saved = readDraft();
-    setTotalKwh(saved?.totalKwh ?? "");
-    setBill(saved?.bill || (billAmount > 0 ? formatAmountFromNumber(billAmount) : ""));
-    setMine(saved?.mine ?? "");
-    setBrother(saved?.brother ?? "");
-    setReady(true);
-  }, [open, billAmount]);
-
-  useEffect(() => {
-    if (!open || !ready || typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ totalKwh, bill, mine, brother }));
-  }, [open, ready, totalKwh, bill, mine, brother]);
+    setTotalKwh("");
+    setBill(billAmount > 0 ? formatAmountFromNumber(billAmount) : "");
+    setMine("");
+    setBrother("");
+  }, [open, saved, billAmount]);
 
   const split = splitBillByKwh({
     totalKwh: parseAmountInput(totalKwh),
@@ -76,16 +59,35 @@ export function EdesurSplitDialog({
     mineKwh: parseAmountInput(mine),
     brotherKwh: parseAmountInput(brother),
   });
-  const gap = split ? received - split.brother : 0;
+  const balance = split ? brotherSettlement(split.brother, received) : null;
+
+  async function save() {
+    if (!split || split.exceeds || saving) return;
+    setSaving(true);
+    try {
+      await onSave({
+        totalKwh: parseAmountInput(totalKwh),
+        totalBill: parseAmountInput(bill),
+        mineKwh: parseAmountInput(mine),
+        brotherKwh: parseAmountInput(brother),
+      });
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo guardar el reparto");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Repartir EDESUR</DialogTitle>
+          <DialogTitle>Repartir EDESUR de {monthLabel}</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          El total de la factura se divide por los kWh totales. Cada uno paga ese precio por lo que consumió.
+          El total de la factura se divide por los kWh totales. Cada uno paga ese precio por lo que consumió. Queda
+          guardado en {monthLabel}.
         </p>
         <div className="mt-3 space-y-2">
           <div>
@@ -140,7 +142,7 @@ export function EdesurSplitDialog({
             />
           </div>
         </div>
-        {split ? (
+        {split && balance ? (
           <div className="mt-3 space-y-1 rounded-md border border-border px-2 py-2 text-sm">
             <p className="flex items-baseline justify-between gap-2">
               <span>Yo pago</span>
@@ -150,36 +152,33 @@ export function EdesurSplitDialog({
               <span>Mi hermano paga</span>
               <span className="font-semibold tabular-nums">{formatMoney(split.brother, "ARS")}</span>
             </p>
-            <p className="text-[11px] text-muted-foreground">
-              Cada kWh sale {formatMoney(split.rate, "ARS")}.
-            </p>
+            <p className="text-[11px] text-muted-foreground">Cada kWh sale {formatMoney(split.rate, "ARS")}.</p>
             {split.exceeds ? (
-              <p className="text-[11px] text-destructive">
-                Entre los dos superan los kWh totales de la factura.
-              </p>
+              <p className="text-[11px] text-destructive">Entre los dos superan los kWh totales de la factura.</p>
             ) : split.otherKwh > 0.000001 ? (
               <p className="text-[11px] text-muted-foreground">
                 Quedan {kwhText(split.otherKwh)} kWh sin asignar ({formatMoney(split.otherAmount, "ARS")}).
               </p>
             ) : null}
-            {received > 0 ? (
-              <p className="text-[11px] text-muted-foreground">
-                Este mes ya te entró por EDESUR {formatMoney(received, "ARS")}.{" "}
-                {Math.abs(gap) < 1
-                  ? "Cubre la parte de tu hermano."
-                  : gap > 0
-                    ? `Te pasó ${formatMoney(gap, "ARS")} de más.`
-                    : `Le faltan ${formatMoney(-gap, "ARS")}.`}
-              </p>
-            ) : null}
+            <p className="text-[11px] text-muted-foreground">
+              {received > 0 ? `Este mes ya te entró por EDESUR ${formatMoney(received, "ARS")}. ` : "Este mes todavía no te entró plata por EDESUR. "}
+              {balance.kind === "cubierto"
+                ? "Cubre la parte de tu hermano."
+                : balance.kind === "demas"
+                  ? `Te pasó ${formatMoney(balance.amount, "ARS")} de más.`
+                  : `Le faltan ${formatMoney(balance.amount, "ARS")}.`}
+            </p>
           </div>
         ) : (
           <p className="mt-3 text-[11px] text-muted-foreground">
             Completá los kWh totales y el total de la factura para ver cuánto paga cada uno.
           </p>
         )}
-        <div className="mt-4">
-          <Button className="w-full" variant="outline" onClick={() => onOpenChange(false)}>
+        <div className="mt-4 flex gap-2">
+          <Button className="flex-1" disabled={!split || split.exceeds || saving} onClick={() => void save()}>
+            {saving ? "Guardando…" : `Guardar en ${monthLabel}`}
+          </Button>
+          <Button className="flex-1" variant="outline" onClick={() => onOpenChange(false)}>
             Cerrar
           </Button>
         </div>

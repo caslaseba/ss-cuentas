@@ -16,6 +16,26 @@ export function mentionsEdesur(concept: string, notes: string | null | undefined
   return isEdesurName(`${concept} ${observationOf(notes)}`);
 }
 
+/** Reparto guardado de un mes. Noviembre no reutiliza los kWh de octubre. */
+export type EdesurMonth = {
+  month: string;
+  totalKwh: number;
+  totalBill: number;
+  mineKwh: number;
+  brotherKwh: number;
+};
+
+export function withEdesurMonth(list: EdesurMonth[], next: EdesurMonth) {
+  return [...list.filter((item) => item.month !== next.month), next].sort((a, b) => a.month.localeCompare(b.month));
+}
+
+export function brotherSettlement(share: number, received: number) {
+  const gap = cents(received - share);
+  if (Math.abs(gap) < 1) return { kind: "cubierto" as const, amount: 0 };
+  if (gap > 0) return { kind: "demas" as const, amount: gap };
+  return { kind: "falta" as const, amount: cents(-gap) };
+}
+
 export type KwhSplit = {
   rate: number;
   mine: number;
