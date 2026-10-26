@@ -24,7 +24,7 @@ import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/m
 import { monthIncomeSplit } from "@/lib/finance/month-brief";
 import { cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
-import { cardBillNote, isCardBillPayment } from "@/lib/finance/tx-notes";
+import { cardBillNotes, isCardBillPayment } from "@/lib/finance/tx-notes";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
 import { cn, formatMoney, isoDate, monthKey } from "@/lib/utils";
 import type { CreditCard, PaymentMethod, RecurringPayment, Transaction } from "@/lib/types";
@@ -74,6 +74,8 @@ function ResumenInner() {
     cardHitsNext,
     cardHitsLater,
     cardDue,
+    cardBillTx,
+    settledCardIds,
     visaMia,
     visaPapa,
     tarjetaAbierta,
@@ -89,6 +91,8 @@ function ResumenInner() {
   const [openCats, setOpenCats] = useState<string[]>([]);
   const [source, setSource] = useState("todas");
   const [listOrder, setListOrder] = useState<"fecha" | "categoria" | "monto">("monto");
+  const [picking, setPicking] = useState(false);
+  const [pickedIds, setPickedIds] = useState<string[]>([]);
 
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [editingFixed, setEditingFixed] = useState<RecurringPayment | null>(null);
@@ -383,9 +387,11 @@ function ResumenInner() {
     return `${viewedMonth}-${String(day).padStart(2, "0")}`;
   }
 
-  const cardPayment = transactions.find(
+  const cardPayments = transactions.filter(
     (tx) => tx.type === "egreso" && tx.payment_method !== "tarjeta_credito" && isCardBillPayment(tx.notes, viewedMonth),
   );
+  const cardPaid = cardDue.total <= 0 && cardPayments.length > 0;
+  const cardPaidAmount = cardPayments.reduce((sum, tx) => sum + Number(tx.amount), 0);
 
   async function confirmPay() {
     if (!payAsk) return;
@@ -411,7 +417,7 @@ function ResumenInner() {
   }
 
   async function confirmCardPay() {
-    if (cardDue.total <= 0 || cardPayment) return;
+    if (cardDue.total <= 0 || cardPaid) return;
     setCardPayAsk(false);
     try {
       await saveTransaction({
@@ -421,7 +427,7 @@ function ResumenInner() {
         concept: "TARJETA TOTAL",
         payment_method: "transferencia",
         occurred_on: dateInViewedMonth(payDate || isoDate(new Date())),
-        notes: cardBillNote(viewedMonth),
+        notes: cardBillNotes(viewedMonth, cardBillTx.map((tx) => tx.id)),
         source: "manual",
       });
       toast.success("Tarjeta pagada. Descuenta el sueldo de este mes.");
@@ -431,12 +437,60 @@ function ResumenInner() {
   }
 
   async function confirmCardUnpay() {
-    if (!cardPayment) return;
+    if (!cardPayments.length) return;
     try {
-      await deleteTransaction(cardPayment.id);
+      for (const tx of cardPayments) await deleteTransaction(tx.id);
       toast.success("Pago de la tarjeta anulado");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo deshacer");
+    }
+  }
+
+  function togglePick(tx: Transaction) {
+    setPickedIds((current) => (current.includes(tx.id) ? current.filter((id) => id !== tx.id) : [...current, tx.id]));
+  }
+
+  function togglePickIds(ids: string[]) {
+    setPickedIds((current) => {
+      const allOn = ids.every((id) => current.includes(id));
+      if (allOn) return current.filter((id) => !ids.includes(id));
+      return [...new Set([...current, ...ids])];
+    });
+  }
+
+  const pickedRows = filteredMoves.filter((tx) => pickedIds.includes(tx.id));
+  const pickedCards = pickedRows.filter((tx) => tx.type === "egreso" && tx.payment_method === "tarjeta_credito");
+  const pickedCash = pickedRows.filter((tx) => tx.type === "egreso" && tx.payment_method !== "tarjeta_credito");
+  const settledCardSet = new Set(settledCardIds);
+  const pickedPayable = pickedCards.filter((tx) => !isProjectedTx(tx) && !settledCardSet.has(tx.id));
+  const pickedPayableSum = pickedPayable.reduce((sum, tx) => sum + toArs(Number(tx.amount), tx.currency), 0);
+  const pickedCashSum = pickedCash.reduce((sum, tx) => sum + toArs(Number(tx.amount), tx.currency), 0);
+  const allVisiblePicked = filteredMoves.length > 0 && filteredMoves.every((tx) => pickedIds.includes(tx.id));
+
+  async function payPickedCards() {
+    if (!pickedPayable.length) {
+      toast.error(
+        pickedCards.some((tx) => isProjectedTx(tx))
+          ? "Esos gastos todavía no se debitaron."
+          : "Esos gastos de tarjeta ya descuentan el sueldo.",
+      );
+      return;
+    }
+    try {
+      await saveTransaction({
+        type: "egreso",
+        amount: pickedPayableSum,
+        currency: "ARS",
+        concept: pickedPayable.length === 1 ? `TARJETA ${pickedPayable[0].concept}` : `TARJETA · ${pickedPayable.length} gastos`,
+        payment_method: "transferencia",
+        occurred_on: dateInViewedMonth(isoDate(new Date())),
+        notes: cardBillNotes(viewedMonth, pickedPayable.map((tx) => tx.id)),
+        source: "manual",
+      });
+      setPickedIds((current) => current.filter((id) => !pickedPayable.some((tx) => tx.id === id)));
+      toast.success("Esos gastos de tarjeta descuentan el sueldo de este mes.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo descontar");
     }
   }
 
@@ -473,7 +527,7 @@ function ResumenInner() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-lg space-y-3 md:max-w-2xl">
+    <div className={cn("mx-auto w-full min-w-0 max-w-lg space-y-3 md:max-w-2xl", picking && "pb-24")}>
       <div>
         <div className="mb-1.5 flex items-center justify-between gap-1">
           <Button
@@ -563,14 +617,14 @@ function ResumenInner() {
             </p>
             {cardDue.total > 0 ? (
               <p className="mt-1 text-[11px] leading-tight">
-                {cardPayment ? "Tarjeta del mes anterior pagada " : "Tarjeta del mes anterior "}
+                {cardPaid ? "Tarjeta del mes anterior pagada " : "Tarjeta del mes anterior "}
                 <span className="font-semibold tabular-nums">
-                  {formatMoney(cardPayment ? Number(cardPayment.amount) : cardDue.total, "ARS")}
+                  {formatMoney(cardPaid ? cardPaidAmount : cardDue.total, "ARS")}
                 </span>
                 <span className="block text-[10px] text-muted-foreground">
-                  {cardPayment
+                  {cardPaid
                     ? "Ya descuenta el sueldo de este mes."
-                    : "Cuando la pagues, descuenta el sueldo de este mes."}
+                    : "Cuando la pagues, o elijas algunos gastos, descuenta el sueldo de este mes."}
                 </span>
               </p>
             ) : null}
@@ -718,8 +772,26 @@ function ResumenInner() {
                   {label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => {
+                  setPicking((on) => !on);
+                  setPickedIds([]);
+                }}
+                className={cn(
+                  "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                  picking ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground",
+                )}
+              >
+                {picking ? "Listo" : "Elegir"}
+              </button>
             </div>
           </div>
+          {picking ? (
+            <p className="text-[10px] text-muted-foreground">
+              Tocá uno o varios. Si son de tarjeta, los descontás juntos de este sueldo.
+            </p>
+          ) : null}
           {listOrder === "fecha" && source !== "plata" ? (
             <p className="text-[10px] text-muted-foreground">
               Tarjetas del {dayLabel(prevClose)} al {dayLabel(closeOn)}, el cierre anterior inclusive.
@@ -729,9 +801,20 @@ function ResumenInner() {
             <div className="space-y-2">
               {dateGroups.map((group) => (
                 <div key={group.day} className="space-y-1">
-                  <p className="text-[10px] font-medium capitalize text-muted-foreground">
-                    {format(parseISO(group.day), "EEEE d 'de' MMMM", { locale: es })}
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-medium capitalize text-muted-foreground">
+                      {format(parseISO(group.day), "EEEE d 'de' MMMM", { locale: es })}
+                    </p>
+                    {picking ? (
+                      <button
+                        type="button"
+                        onClick={() => togglePickIds(group.txs.map((tx) => tx.id))}
+                        className="text-[10px] font-medium text-primary"
+                      >
+                        {group.txs.every((tx) => pickedIds.includes(tx.id)) ? "Quitar día" : "Elegir día"}
+                      </button>
+                    ) : null}
+                  </div>
                   {group.txs.map((tx) => (
                     <MovementRow
                       key={tx.id}
@@ -741,6 +824,8 @@ function ResumenInner() {
                       installments={installments}
                       tag={rhythmOf(tx)}
                       onSelect={selectTx}
+                      picked={pickedIds.includes(tx.id)}
+                      onPick={picking ? togglePick : undefined}
                     />
                   ))}
                 </div>
@@ -757,14 +842,30 @@ function ResumenInner() {
               const parts = source === "todas" ? splitLine(row.txs) : [];
               const detail = [onlyMark, ...parts].filter(Boolean).join(" · ");
               const groups = open ? groupsFor(row.txs) : [];
+              const categoryPicked = row.txs.length > 0 && row.txs.every((tx) => pickedIds.includes(tx.id));
               return (
                 <div key={row.name}>
+                  <div className="flex items-stretch gap-1">
+                    {picking ? (
+                      <button
+                        type="button"
+                        aria-pressed={categoryPicked}
+                        aria-label={categoryPicked ? `Quitar ${row.name}` : `Elegir ${row.name}`}
+                        onClick={() => togglePickIds(row.txs.map((tx) => tx.id))}
+                        className={cn(
+                          "grid w-8 shrink-0 place-items-center rounded-md border text-xs",
+                          categoryPicked ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background",
+                        )}
+                      >
+                        {categoryPicked ? "✓" : ""}
+                      </button>
+                    ) : null}
                   <button
                     type="button"
                     aria-expanded={open}
                     onClick={() => setOpenCats((current) => toggleName(current, row.name))}
                     className={cn(
-                      "flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-left",
+                      "flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-left",
                       categoryChipClass(groupCategory(row.name)),
                     )}
                   >
@@ -792,11 +893,23 @@ function ResumenInner() {
                       {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                     </span>
                   </button>
+                  </div>
                   {open ? (
                     <div className="mt-1 space-y-2 rounded-md border border-border bg-background p-1.5">
                       {groups.map((group) => (
                         <div key={group.label} className="space-y-1">
-                          <p className="text-[10px] font-medium text-muted-foreground">{group.label}</p>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[10px] font-medium text-muted-foreground">{group.label}</p>
+                            {picking ? (
+                              <button
+                                type="button"
+                                onClick={() => togglePickIds(group.txs.map((tx) => tx.id))}
+                                className="text-[10px] font-medium text-primary"
+                              >
+                                {group.txs.every((tx) => pickedIds.includes(tx.id)) ? "Quitar" : "Elegir"}
+                              </button>
+                            ) : null}
+                          </div>
                           {group.txs.map((tx) => (
                             <MovementRow
                               key={tx.id}
@@ -806,6 +919,8 @@ function ResumenInner() {
                               installments={installments}
                               tag={rhythmOf(tx)}
                               onSelect={selectTx}
+                              picked={pickedIds.includes(tx.id)}
+                              onPick={picking ? togglePick : undefined}
                             />
                           ))}
                         </div>
@@ -822,23 +937,23 @@ function ResumenInner() {
         <p className="text-sm text-muted-foreground">Nada en este mes para ese filtro.</p>
       )}
 
-      {services.length > 0 || cardDue.total > 0 || cardPayment ? (
+      {services.length > 0 || cardDue.total > 0 || cardPaid ? (
         <div className="space-y-1.5 pb-4">
           <h2 className="text-xs font-medium">Mensual</h2>
           <p className="text-[11px] text-muted-foreground">
             Siguen en su categoría. Acá los marcás pagados. El total de la tarjeta cae en el mes en que se abona.
           </p>
           <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-            {cardDue.total > 0 || cardPayment ? (
+            {cardDue.total > 0 || cardPaid ? (
               <div
                 className={cn(
                   "rounded-md border px-1.5 py-1",
-                  cardPayment ? "border-emerald-500/40 bg-emerald-500/10" : "border-violet-500/40 bg-violet-500/10",
+                  cardPaid ? "border-emerald-500/40 bg-emerald-500/10" : "border-violet-500/40 bg-violet-500/10",
                 )}
               >
                 <p className="truncate text-[11px] font-medium leading-tight">TARJETA TOTAL</p>
                 <p className="text-[11px] font-semibold leading-tight tabular-nums">
-                  {formatMoney(cardPayment ? Number(cardPayment.amount) : cardDue.total, "ARS")}
+                  {formatMoney(cardPaid ? cardPaidAmount : cardDue.total, "ARS")}
                 </p>
                 <p className="text-[9px] leading-tight text-muted-foreground">
                   Visa mía {formatMoney(cardDue.visa, "ARS")}
@@ -847,9 +962,9 @@ function ResumenInner() {
                   Extensión {formatMoney(cardDue.extension, "ARS")}
                 </p>
                 <p className="text-[9px] leading-tight text-muted-foreground">
-                  {cardPayment ? "Pagada · descuenta este sueldo" : "Mes anterior · se paga este mes"}
+                  {cardPaid ? "Pagada · descuenta este sueldo" : "Mes anterior · se paga este mes"}
                 </p>
-                {!isFuture && !cardPayment ? (
+                {!isFuture && !cardPaid ? (
                   <Button
                     size="sm"
                     className="mt-1 h-6 w-full px-1 text-[10px]"
@@ -863,7 +978,7 @@ function ResumenInner() {
                     Pagué
                   </Button>
                 ) : null}
-                {cardPayment ? (
+                {cardPaid ? (
                   <Button
                     size="sm"
                     variant="outline"
@@ -888,6 +1003,49 @@ function ResumenInner() {
         onOpenChange={(v) => !v && setEditingFixed(null)}
       />
       <PinGate open={askPin} error={pinError} onClose={closePin} onSubmit={submitPin} />
+
+      {picking ? (
+        <div className="fixed inset-x-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-30 border-t bg-background/95 px-3 py-2 backdrop-blur">
+          <div className="mx-auto flex w-full max-w-lg flex-col gap-1.5 md:max-w-2xl">
+            <p className="text-xs font-medium">
+              {pickedRows.length === 0
+                ? "Nada elegido"
+                : `${pickedRows.length} ${pickedRows.length === 1 ? "elegido" : "elegidos"}`}
+            </p>
+            {pickedPayableSum > 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                Tarjeta a descontar {formatMoney(pickedPayableSum, "ARS")}
+              </p>
+            ) : null}
+            {pickedCashSum > 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                Efectivo y transferencia {formatMoney(pickedCashSum, "ARS")} · ya descuenta el sueldo
+              </p>
+            ) : null}
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8"
+                onClick={() => togglePickIds(filteredMoves.map((tx) => tx.id))}
+              >
+                {allVisiblePicked ? "Ninguno" : "Todos"}
+              </Button>
+              {pickedPayableSum > 0 ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 flex-1"
+                  onClick={() => guard(() => void payPickedCards(), isPast)}
+                >
+                  Descontar tarjetas
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <Dialog open={cardPayAsk} onOpenChange={setCardPayAsk}>
         <DialogContent>

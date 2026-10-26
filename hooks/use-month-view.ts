@@ -26,6 +26,7 @@ import {
   uniqueById,
 } from "@/lib/finance/month-view";
 import { BOOKS_START_ISO, BOOKS_START_MONTH } from "@/lib/finance/recurring";
+import { cardBillItemIds, cardBillMonthOf, isCardBillPayment } from "@/lib/finance/tx-notes";
 import { closeOnForMonth, describedPeriod, salaryMonthOf } from "@/lib/finance/close-cycle";
 import { monthIsFuture, monthIsPast, monthIsSealed } from "@/lib/finance/edit-lock";
 import { hasCarryOver, monthWallet, shiftMonth } from "@/lib/finance/wallet";
@@ -186,11 +187,30 @@ export function useMonthView(initial?: Date) {
   const tarjetaAbierta = openCardTx
     .filter((t) => t.type === "egreso")
     .reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
-  const cardHitsNow = cardSum(hitsNow);
+  const paidCardIds = new Set<string>();
+  const fullPaidMonths = new Set<string>();
+  for (const tx of transactions) {
+    if (tx.type !== "egreso" || tx.payment_method === "tarjeta_credito" || !isCardBillPayment(tx.notes)) continue;
+    const items = cardBillItemIds(tx.notes);
+    const month = cardBillMonthOf(tx.notes);
+    if (!items.length && month) fullPaidMonths.add(month);
+    for (const id of items) paidCardIds.add(id);
+  }
+  const settledCardIds = new Set(paidCardIds);
+  for (const month of fullPaidMonths) {
+    const [year, monthNumber] = month.split("-").map(Number);
+    if (!year || !monthNumber) continue;
+    for (const tx of hitsSalary(new Date(year, monthNumber - 1, 1))) {
+      if (tx.type === "egreso") settledCardIds.add(tx.id);
+    }
+  }
+  const unpaidNow = hitsNow.filter(
+    (tx) => tx.type === "egreso" && !fullPaidMonths.has(monthKey(cursor)) && !paidCardIds.has(tx.id),
+  );
+  const cardHitsNow = cardSum(unpaidNow);
   const cardHitsNext = cardSum(hitsNext);
   const cardHitsLater = cardSum(hitsLater);
-  const cardDue = hitsNow
-    .filter((tx) => tx.type === "egreso")
+  const cardDue = unpaidNow
     .reduce(
       (sum, tx) => {
         const amount = toArs(Number(tx.amount), tx.currency);
@@ -238,6 +258,8 @@ export function useMonthView(initial?: Date) {
     canGoNext,
     canGoPrev: monthKey(cursor) > BOOKS_START_MONTH,
     cardDue,
+    cardBillTx: unpaidNow,
+    settledCardIds: [...settledCardIds],
     tarjetaAbierta,
     visaMia,
     visaPapa,

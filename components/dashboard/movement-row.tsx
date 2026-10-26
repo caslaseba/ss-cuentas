@@ -26,6 +26,8 @@ export function MovementRow({
   installments,
   tag = null,
   onSelect,
+  picked = false,
+  onPick,
 }: {
   tx: Transaction;
   categories: Category[];
@@ -34,6 +36,8 @@ export function MovementRow({
   cycleEnd?: Date | null;
   tag?: string | null;
   onSelect: (tx: Transaction) => void;
+  picked?: boolean;
+  onPick?: (tx: Transaction) => void;
 }) {
   const { monthCloses } = useFinance();
   const sumNote = sumNoteForCharge(tx, cards, monthCloses);
@@ -59,13 +63,26 @@ export function MovementRow({
   return (
     <button
       type="button"
-      onClick={() => onSelect(tx)}
+      onClick={() => (onPick ? onPick(tx) : onSelect(tx))}
+      aria-pressed={onPick ? picked : undefined}
       className={cn(
         "flex w-full items-center justify-between gap-2 rounded-md border px-1.5 py-1 text-left",
         movementRowClass(tx),
+        picked && "ring-2 ring-primary",
       )}
     >
-      <div className="min-w-0">
+      {onPick ? (
+        <span
+          className={cn(
+            "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border text-[10px] leading-none",
+            picked ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background",
+          )}
+          aria-hidden
+        >
+          {picked ? "✓" : ""}
+        </span>
+      ) : null}
+      <div className="min-w-0 flex-1">
         <p className="truncate text-[11px] font-medium leading-tight">{cleanConceptName(tx.concept)}</p>
         {obs ? <p className="truncate text-[9px] leading-tight text-muted-foreground">{obs}</p> : null}
         {plan && (tx.installment_number || progress) ? (

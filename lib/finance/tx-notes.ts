@@ -48,6 +48,31 @@ export function cardBillNote(month: string) {
   return `tarjeta-total:${month}`;
 }
 
+export function cardBillNotes(month: string, ids: string[]) {
+  const lines = [cardBillNote(month)];
+  if (ids.length) lines.push(`tarjeta-items:${ids.join(",")}`);
+  return lines.join("\n");
+}
+
+export function cardBillMonthOf(notes: string | null | undefined) {
+  const line = notesLines(notes).find((item) => item.startsWith("tarjeta-total:"));
+  if (!line) return null;
+  const month = line.slice("tarjeta-total:".length);
+  return /^\d{4}-\d{2}$/.test(month) ? month : null;
+}
+
+export function cardBillItemIds(notes: string | null | undefined) {
+  const line = notesLines(notes).find((item) => item.startsWith("tarjeta-items:"));
+  if (!line) return [];
+  return line
+    .slice("tarjeta-items:".length)
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
 export function isCardBillPayment(notes: string | null | undefined, month?: string) {
-  return notesLines(notes).some((line) => (month ? line === cardBillNote(month) : line.startsWith("tarjeta-total:")));
+  const found = cardBillMonthOf(notes);
+  if (!found) return false;
+  return month ? found === month : true;
 }
