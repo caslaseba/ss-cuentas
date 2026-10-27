@@ -25,7 +25,7 @@ export type EdesurMonth = {
   brotherKwh: number;
 };
 
-export type EdesurPhotoLabel = "mio" | "hermano";
+export type EdesurPhotoLabel = "mio" | "hermano" | "factura";
 
 /** Foto del medidor archivada en un mes. No incluye la imagen, solo dónde está. */
 export type EdesurPhoto = {
@@ -37,7 +37,9 @@ export type EdesurPhoto = {
 };
 
 export function edesurPhotoLabel(label: EdesurPhotoLabel) {
-  return label === "mio" ? "Mío" : "De mi hermano";
+  if (label === "mio") return "Mío";
+  if (label === "factura") return "Factura";
+  return "De mi hermano";
 }
 
 export function withEdesurMonth(list: EdesurMonth[], next: EdesurMonth) {

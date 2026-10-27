@@ -100,6 +100,16 @@ body {
   }
 }
 
+#month-report,
+#edesur-report {
+  position: absolute;
+  left: -12000px;
+  top: 0;
+  width: 190mm;
+  background: #fff;
+  color: #111;
+}
+
 @media print {
   @page {
     margin: 12mm;
@@ -124,14 +134,23 @@ body {
     max-width: none !important;
   }
   #month-report,
-  #month-report * {
+  #edesur-report {
+    display: none !important;
+  }
+  body[data-print="sueldo"] #month-report,
+  body[data-print="edesur"] #edesur-report {
+    display: block !important;
+    position: static !important;
+    left: auto !important;
+    width: auto !important;
+    color: #111 !important;
+    background: #fff !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  #month-report {
-    display: block !important;
-    width: 100% !important;
-    color: #111 !important;
-    background: #fff !important;
+  body[data-print="sueldo"] #month-report *,
+  body[data-print="edesur"] #edesur-report * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }

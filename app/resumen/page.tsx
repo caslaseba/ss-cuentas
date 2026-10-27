@@ -11,6 +11,7 @@ import { TransactionEdit } from "@/components/entry/transaction-edit";
 import { RecurringEdit } from "@/components/entry/recurring-edit";
 import { EdesurMeterPhotos } from "@/components/dashboard/edesur-photos";
 import { EdesurSplitDialog } from "@/components/dashboard/edesur-split";
+import { EdesurInvoice } from "@/components/dashboard/edesur-invoice";
 import { MonthReport } from "@/components/dashboard/month-report";
 import { MovementRow } from "@/components/dashboard/movement-row";
 import { Button } from "@/components/ui/button";
@@ -26,7 +27,7 @@ import { planIdFromProjectedCuota } from "@/lib/finance/installment-drop";
 import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
 import { brotherSettlement, isEdesurName, splitBillByKwh, type EdesurMonth } from "@/lib/finance/edesur";
 import { monthIncomeLines, monthIncomeSplit } from "@/lib/finance/month-brief";
-import { cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
+import { BOOKS_START_ISO, cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
 import { cardBillNotes, isCardBillPayment } from "@/lib/finance/tx-notes";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
@@ -79,6 +80,10 @@ function ResumenInner() {
     cardHitsLater,
     cardDue,
     cardBillTx,
+    salaryCardTx,
+    salaryCardFrom,
+    salaryCardTo,
+    cashMoves,
     settledCardIds,
     visaMia,
     visaPapa,
@@ -498,6 +503,21 @@ function ResumenInner() {
   );
   const cardPaid = cardDue.total <= 0 && cardPayments.length > 0;
   const cardPaidAmount = cardPayments.reduce((sum, tx) => sum + Number(tx.amount), 0);
+  const reportCardPaid = cardPayments.reduce((sum, tx) => sum + toArs(Number(tx.amount), tx.currency), 0);
+  const reportOutflows = cashMoves.filter((tx) => tx.type === "egreso" && !isCardBillPayment(tx.notes, viewedMonth));
+  const cardCoverage =
+    salaryCardTo < BOOKS_START_ISO
+      ? "Este sueldo no arrastra tarjeta: el período anterior cerró antes de octubre de 2026. El primer informe completo es noviembre, con la tarjeta de octubre."
+      : salaryCardFrom < BOOKS_START_ISO
+        ? "En los libros entra el consumo desde el 01/10 hasta el cierre. Noviembre es el primer mes con el resumen completo de esa tarjeta."
+        : "";
+  const cardPaymentNote =
+    reportCardPaid > 0 && cardDue.total <= 0
+      ? "La transferencia de esta tarjeta ya salió de este sueldo."
+      : cardDue.total > 0
+        ? "Todavía no está toda transferida. Lo que falta se descuenta igual, porque se paga con este sueldo."
+        : "No hay consumos de tarjeta cargados para este sueldo.";
+  const cardNote = [cardCoverage, cardPaymentNote].filter(Boolean).join(" ");
 
   async function confirmPay() {
     if (!payAsk) return;
@@ -632,25 +652,13 @@ function ResumenInner() {
     }
   }
 
-  const reportBills = services.flatMap((item) => {
-    const shown = shownRecurring(item, viewedMonth, transactions);
-    if (!shown || shown.voided) return [];
-    const via = recurringVia(item);
-    const paid = !via.onCard && cashRecurringPaid(item, transactions, cursor, isCurrent);
-    return [
-      {
-        name: item.name,
-        amount: formatMoney(shown.amount, shown.currency),
-        detail: via.onCard ? "Tarjeta" : paid ? "Pagado" : `Día ${item.due_day}`,
-      },
-    ];
-  });
-
   function downloadPdf() {
     const previous = document.title;
+    document.body.dataset.print = "sueldo";
     document.title = `SS Cuentas ${format(cursor, "MMMM yyyy", { locale: es })}`;
     const restore = () => {
       document.title = previous;
+      delete document.body.dataset.print;
       window.removeEventListener("afterprint", restore);
     };
     window.addEventListener("afterprint", restore);
@@ -703,7 +711,14 @@ function ResumenInner() {
             {salaryNote ? <p className="mt-1 text-[10px] leading-snug text-muted-foreground">{salaryNote}</p> : null}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
-            <Button type="button" size="sm" variant="outline" className="h-8 px-2 text-xs" onClick={downloadPdf}>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 px-2 text-xs"
+              title="PDF de lo que se paga con este sueldo"
+              onClick={downloadPdf}
+            >
               PDF
             </Button>
             <Button
@@ -821,6 +836,21 @@ function ResumenInner() {
       <section className="rounded-md border border-border px-2 py-2">
         <EdesurMeterPhotos month={viewedMonth} monthLabel={monthName} />
       </section>
+
+      <EdesurInvoice
+        month={viewedMonth}
+        monthLabel={monthName}
+        split={edesurSplit}
+        totalKwh={savedEdesur?.totalKwh ?? 0}
+        totalBill={savedEdesur?.totalBill ?? 0}
+        mineKwh={savedEdesur?.mineKwh ?? 0}
+        brotherKwh={savedEdesur?.brotherKwh ?? 0}
+        onNeedNumbers={() => {
+          const item = recurring.find((row) => isEdesurName(row.name));
+          if (item) setEdesurAsk(item);
+          toast.error("Primero indicá el total de la factura y los kWh de cada uno, y guardalo en este mes.");
+        }}
+      />
 
       {isPast && !unlocked ? (
         <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
@@ -1339,47 +1369,22 @@ function ResumenInner() {
     </div>
     <MonthReport
       monthLabel={format(cursor, "MMMM yyyy", { locale: es })}
-      queda={wallet.queda}
       estimated={estimated}
       salaryNote={salaryNote}
       sueldo={sueldoMes}
       otros={ingresosMes}
       incomeLines={incomeLines}
-      visaMia={visaMia}
-      visaPapa={visaPapa}
-      tarjetaAbierta={tarjetaAbierta}
-      periodLabel={`Tarjetas del ${dayLabel(prevClose)} al ${dayLabel(closeOn)}.`}
-      nextPayLabel={tarjetaAbierta > 0 ? `Se abonan en ${nextName}.` : "Sin consumo en las tarjetas."}
-      cardDueLabel={
-        cardDue.total > 0 || cardPaid
-          ? cardPaid
-            ? `Tarjeta del mes anterior pagada ${formatMoney(cardPaidAmount, "ARS")}. Ya descuenta este sueldo.`
-            : `Tarjeta del mes anterior ${formatMoney(cardDue.total, "ARS")}. Cuando la pagues, descuenta este sueldo.`
-          : null
-      }
-      cash={wallet.gastadoContado}
-      moves={monthMoves}
+      cardFrom={salaryCardFrom}
+      cardTo={salaryCardTo}
+      cardNote={cardNote}
+      cardCharges={salaryCardTx.filter((tx) => tx.type === "egreso")}
+      cardPaidAmount={reportCardPaid}
+      cardUnpaid={cardDue.total}
+      outflows={reportOutflows}
       categories={categories}
       cards={cards}
+      papaId={papa?.id ?? null}
       toArs={toArs}
-      bills={reportBills}
-      brother={
-        edesurSplit && edesurBalance
-          ? {
-              share: formatMoney(edesurSplit.brother, "ARS"),
-              received: formatMoney(edesurReceived, "ARS"),
-              status:
-                edesurBalance.kind === "cubierto"
-                  ? "Cubre su parte de este mes."
-                  : edesurBalance.kind === "demas"
-                    ? `Te pasó ${formatMoney(edesurBalance.amount, "ARS")} de más en este mes.`
-                    : `Le faltan ${formatMoney(edesurBalance.amount, "ARS")} de este mes.`,
-              kwh: savedEdesur
-                ? `${savedEdesur.mineKwh.toLocaleString("es-AR")} kWh tuyos y ${savedEdesur.brotherKwh.toLocaleString("es-AR")} kWh de él, sobre ${savedEdesur.totalKwh.toLocaleString("es-AR")} kWh.`
-                : "",
-            }
-          : null
-      }
     />
     </>
   );

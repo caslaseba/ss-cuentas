@@ -1422,7 +1422,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     if (!/^\d{4}-\d{2}$/.test(month)) throw new Error("Mes inválido");
     const user = await currentUser();
     if (!user) throw new Error("Sin sesión");
-    const blob = await compressMeterPhoto(file);
+    const blob = await compressMeterPhoto(file, label === "factura" ? 2200 : 1600);
     const id = crypto.randomUUID();
     const path = `${user.id}/${month}/${id}.jpg`;
     const uploaded = await supabase.storage.from(EDESUR_METER_BUCKET).upload(path, blob, {

@@ -1,5 +1,5 @@
 /** Achica la foto del medidor para guardarla como JPEG. */
-export async function compressMeterPhoto(file: File) {
+export async function compressMeterPhoto(file: File, maxEdge = 1600) {
   if (!file.type.startsWith("image/")) {
     throw new Error("Elegí una foto.");
   }
@@ -9,7 +9,7 @@ export async function compressMeterPhoto(file: File) {
   } catch {
     throw new Error("Esa foto no se pudo leer. Probá con una JPG.");
   }
-  const max = 1600;
+  const max = maxEdge;
   const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
   const width = Math.max(1, Math.round(bitmap.width * scale));
   const height = Math.max(1, Math.round(bitmap.height * scale));

@@ -25,226 +25,278 @@ function categoryColor(name: string) {
   return CATEGORY_COLOR[name] ?? { bg: "#f4f4f5", fg: "#18181b", border: "#d4d4d8" };
 }
 
-function moneyTone(tx: Transaction) {
-  if (tx.type === "ingreso") return "#047857";
-  if (tx.payment_method === "tarjeta_credito") return "#6d28d9";
-  return "#3730a3";
+function day(iso: string) {
+  return format(parseISO(iso), "dd/MM", { locale: es });
 }
+
+function pesos(amount: number) {
+  return formatMoney(amount, "ARS");
+}
+
+type Group = { name: string; total: number; txs: Transaction[] };
 
 export function MonthReport({
   monthLabel,
-  queda,
   estimated,
   salaryNote,
   sueldo,
   otros,
   incomeLines,
-  visaMia,
-  visaPapa,
-  tarjetaAbierta,
-  periodLabel,
-  nextPayLabel,
-  cardDueLabel,
-  cash,
-  moves,
+  cardFrom,
+  cardTo,
+  cardNote,
+  cardCharges,
+  cardPaidAmount,
+  cardUnpaid,
+  outflows,
   categories,
   cards,
+  papaId,
   toArs,
-  bills,
-  brother,
 }: {
   monthLabel: string;
-  queda: number;
   estimated: boolean;
   salaryNote: string | null;
   sueldo: number;
   otros: number;
   incomeLines: { id: string; on: string; concept: string; note: string; amount: number }[];
-  visaMia: number;
-  visaPapa: number;
-  tarjetaAbierta: number;
-  periodLabel: string;
-  nextPayLabel: string;
-  cardDueLabel: string | null;
-  cash: number;
-  moves: Transaction[];
+  cardFrom: string;
+  cardTo: string;
+  cardNote: string;
+  cardCharges: Transaction[];
+  cardPaidAmount: number;
+  cardUnpaid: number;
+  outflows: Transaction[];
   categories: Category[];
   cards: CreditCard[];
+  papaId: string | null;
   toArs: (amount: number, currency: Transaction["currency"]) => number;
-  bills: { name: string; amount: string; detail: string }[];
-  brother: { share: string; received: string; status: string; kwh: string } | null;
 }) {
-  const groups = new Map<string, { name: string; total: number; ingreso: number; txs: Transaction[] }>();
-  for (const tx of moves) {
-    const raw = categories.find((item) => item.id === tx.category_id)?.name ?? (tx.type === "ingreso" ? "Ingresos" : "Sin categoría");
-    const name = groupCategory(raw);
-    const row = groups.get(name) ?? { name, total: 0, ingreso: 0, txs: [] };
+  function ars(tx: Transaction) {
     const amount = toArs(Number(tx.amount), tx.currency);
-    if (!Number.isFinite(amount)) continue;
-    if (tx.type === "ingreso") row.ingreso += amount;
-    else row.total += amount;
-    row.txs.push(tx);
-    groups.set(name, row);
-  }
-  const rows = [...groups.values()].sort((a, b) => Math.max(b.total, b.ingreso) - Math.max(a.total, a.ingreso));
-  for (const row of rows) {
-    row.txs.sort((a, b) => b.occurred_on.localeCompare(a.occurred_on) || a.concept.localeCompare(b.concept, "es"));
+    return Number.isFinite(amount) ? amount : 0;
   }
 
+  function groupsOf(list: Transaction[]) {
+    const groups = new Map<string, Group>();
+    for (const tx of list) {
+      if (tx.type !== "egreso") continue;
+      const raw = categories.find((item) => item.id === tx.category_id)?.name ?? "Sin categoría";
+      const name = groupCategory(raw);
+      const row = groups.get(name) ?? { name, total: 0, txs: [] };
+      row.total += ars(tx);
+      row.txs.push(tx);
+      groups.set(name, row);
+    }
+    const rows = [...groups.values()].sort((a, b) => b.total - a.total);
+    for (const row of rows) {
+      row.txs.sort((a, b) => a.occurred_on.localeCompare(b.occurred_on) || a.concept.localeCompare(b.concept, "es"));
+    }
+    return rows;
+  }
+
+  const entra = (estimated ? sueldo + otros : incomeLines.reduce((sum, line) => sum + line.amount, 0)) || 0;
+  const chargesSum = cardCharges.reduce((sum, tx) => sum + ars(tx), 0);
+  const tarjeta = cardPaidAmount > 0 || cardUnpaid > 0 ? cardPaidAmount + cardUnpaid : chargesSum;
+  const cardGroups = groupsOf(cardCharges);
+  const outGroups = groupsOf(outflows);
+  const salidas = outflows.reduce((sum, tx) => sum + ars(tx), 0);
+  const queda = entra - tarjeta - salidas;
+  const incomes = [...incomeLines].sort((a, b) => a.on.localeCompare(b.on) || a.concept.localeCompare(b.concept, "es"));
+
   return (
-    <article id="month-report" className="hidden bg-white text-black">
-      <header style={{ borderBottom: "2px solid #0f766e", paddingBottom: 8, marginBottom: 12 }}>
+    <article id="month-report" aria-hidden="true">
+      <header style={{ borderBottom: "3px solid #0f766e", paddingBottom: 8, marginBottom: 12 }}>
         <p style={{ margin: 0, fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "#0f766e" }}>
           SS Cuentas
         </p>
-        <h1 style={{ margin: "2px 0 0", fontSize: 22, textTransform: "capitalize" }}>Resumen de {monthLabel}</h1>
-        <p style={{ margin: "4px 0 0", fontSize: 11, color: "#52525b" }}>
-          Informe para leer o imprimir. Ordenado por categoría y, adentro, por fecha.
+        <h1 style={{ margin: "2px 0 0", fontSize: 22, textTransform: "capitalize" }}>Liquidación de {monthLabel}</h1>
+        <p style={{ margin: "4px 0 0", fontSize: 11, color: "#3f3f46" }}>
+          Lo que entra en este sueldo, la tarjeta del período anterior que se paga con él, los servicios y cada salida
+          hasta ahora.
         </p>
       </header>
 
-      <p style={{ margin: "0 0 12px", fontSize: 18 }}>
-        {estimated ? "Te quedaría" : "Te queda"}{" "}
-        <strong style={{ color: "#047857" }}>{formatMoney(queda, "ARS")}</strong>
-        {estimated ? " (estimado)" : ""}
-      </p>
-      {salaryNote ? <p style={{ margin: "-6px 0 12px", fontSize: 11, color: "#3f3f46" }}>{salaryNote}</p> : null}
-
-      <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-        <div style={{ border: "1px solid #d4d4d8", borderRadius: 8, padding: 8 }}>
-          <h2 style={{ margin: 0, fontSize: 12 }}>Entra</h2>
-          <p style={{ margin: "6px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
-            <span>Sueldo{estimated ? " estimado" : ""}</span>
-            <strong style={{ color: "#047857" }}>{formatMoney(sueldo, "ARS")}</strong>
-          </p>
-          <p style={{ margin: "2px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
-            <span>Otros ingresos</span>
-            <strong>{otros > 0 ? formatMoney(otros, "ARS") : "—"}</strong>
-          </p>
-          {incomeLines.map((line) => (
-            <p key={line.id} style={{ margin: "3px 0 0", fontSize: 10, color: "#3f3f46", display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <span>
-                {format(parseISO(line.on), "dd/MM", { locale: es })} {line.concept}
-                {line.note ? ` · ${line.note}` : ""}
-              </span>
-              <span>{formatMoney(line.amount, "ARS")}</span>
-            </p>
-          ))}
-        </div>
-        <div style={{ border: "1px solid #d4d4d8", borderRadius: 8, padding: 8 }}>
-          <h2 style={{ margin: 0, fontSize: 12 }}>Sale</h2>
-          <p style={{ margin: "6px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
-            <span>Las dos tarjetas</span>
-            <strong style={{ color: "#6d28d9" }}>{formatMoney(tarjetaAbierta, "ARS")}</strong>
-          </p>
-          <p style={{ margin: "2px 0 0", fontSize: 10, color: "#3f3f46" }}>
-            Visa mía {formatMoney(visaMia, "ARS")} · Extensión {formatMoney(visaPapa, "ARS")}
-          </p>
-          <p style={{ margin: "2px 0 0", fontSize: 10, color: "#3f3f46" }}>{periodLabel}</p>
-          <p style={{ margin: "2px 0 0", fontSize: 10, color: "#3f3f46" }}>{nextPayLabel}</p>
-          {cardDueLabel ? <p style={{ margin: "4px 0 0", fontSize: 11 }}>{cardDueLabel}</p> : null}
-          <p style={{ margin: "6px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
-            <span>Efectivo y transferencia</span>
-            <strong style={{ color: "#3730a3" }}>{formatMoney(cash, "ARS")}</strong>
-          </p>
-        </div>
+      <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6, marginBottom: 14 }}>
+        <Total label="Entra" value={pesos(entra)} color="#047857" />
+        <Total label="Tarjeta anterior" value={pesos(tarjeta)} color="#6d28d9" />
+        <Total label="Salidas del mes" value={pesos(salidas)} color="#3730a3" />
+        <Total label={estimated ? "Te quedaría" : "Te queda"} value={pesos(queda)} color="#047857" />
       </section>
 
-      {brother ? (
-        <section style={{ border: "1px solid #fcd34d", background: "#fffbeb", borderRadius: 8, padding: 8, marginBottom: 14 }}>
-          <h2 style={{ margin: 0, fontSize: 12 }}>Tu hermano · EDESUR</h2>
-          <p style={{ margin: "4px 0 0", fontSize: 11 }}>
-            Le corresponde {brother.share}. Ya te pasó {brother.received}. {brother.status}
-          </p>
-          <p style={{ margin: "2px 0 0", fontSize: 10, color: "#3f3f46" }}>{brother.kwh}</p>
-        </section>
-      ) : null}
+      <h2 style={{ fontSize: 14, margin: "0 0 6px", color: "#047857" }}>Entra</h2>
+      <p style={{ margin: "0 0 4px", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
+        <span>Sueldo{estimated ? " estimado" : ""}</span>
+        <strong>{pesos(sueldo)}</strong>
+      </p>
+      <p style={{ margin: "0 0 6px", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
+        <span>Otros ingresos</span>
+        <strong>{otros > 0 ? pesos(otros) : "—"}</strong>
+      </p>
+      {salaryNote ? <p style={{ margin: "0 0 8px", fontSize: 10, color: "#3f3f46" }}>{salaryNote}</p> : null}
+      {incomes.map((line) => (
+        <p key={line.id} style={{ margin: "0 0 3px", fontSize: 11, display: "flex", justifyContent: "space-between", gap: 8 }}>
+          <span>
+            <span style={{ color: "#71717a" }}>{day(line.on)} </span>
+            {line.concept}
+            {line.note ? <span style={{ color: "#71717a" }}> · {line.note}</span> : null}
+          </span>
+          <strong style={{ color: "#047857", whiteSpace: "nowrap" }}>+{pesos(line.amount)}</strong>
+        </p>
+      ))}
+      <Sum label="Total que entra" value={pesos(entra)} />
 
-      <h2 style={{ fontSize: 13, margin: "0 0 6px" }}>Categorías</h2>
-      {rows.map((row) => {
-        const color = categoryColor(row.name);
-        return (
-          <section key={row.name} style={{ breakInside: "avoid", marginBottom: 8 }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 8,
-                background: color.bg,
-                color: color.fg,
-                border: `1px solid ${color.border}`,
-                borderRadius: 6,
-                padding: "4px 8px",
-                fontSize: 12,
-                fontWeight: 650,
-              }}
-            >
-              <span>{row.name}</span>
-              <span>
-                {row.ingreso > 0 && row.total === 0
-                  ? `+${formatMoney(row.ingreso, "ARS")}`
-                  : row.total > 0
-                    ? formatMoney(row.total, "ARS")
-                    : ""}
-              </span>
-            </div>
-            {row.txs.map((tx) => {
-              const card = cards.find((item) => item.id === tx.credit_card_id);
-              const method =
-                tx.type === "ingreso"
-                  ? "Entrada"
-                  : tx.payment_method === "tarjeta_credito"
-                    ? card?.kind === "extension"
-                      ? card.name
-                      : "Tu Visa"
-                    : paymentMethodLabel(tx.payment_method);
-              const note = observationOf(tx.notes);
-              return (
-                <div
-                  key={tx.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 8,
-                    borderBottom: "1px solid #e4e4e7",
-                    padding: "3px 4px",
-                    fontSize: 11,
-                    breakInside: "avoid",
-                  }}
-                >
-                  <span>
-                    <span style={{ color: "#71717a" }}>{format(parseISO(tx.occurred_on), "dd/MM", { locale: es })} </span>
-                    {cleanConceptName(tx.concept)}
-                    {note ? <span style={{ color: "#71717a" }}> · {note}</span> : null}
-                    <span style={{ color: "#71717a" }}> · {method}</span>
-                    {isProjectedTx(tx) ? <span style={{ color: "#a16207" }}> · Estimado</span> : null}
-                  </span>
-                  <strong style={{ color: moneyTone(tx), whiteSpace: "nowrap" }}>
-                    {tx.type === "ingreso" ? "+" : "−"}
-                    {formatMoney(Number(tx.amount), tx.currency)}
-                  </strong>
-                </div>
-              );
-            })}
-          </section>
-        );
-      })}
-
-      {bills.length ? (
-        <section style={{ marginTop: 12 }}>
-          <h2 style={{ fontSize: 13, margin: "0 0 6px" }}>Mensual</h2>
-          {bills.map((bill) => (
-            <p key={bill.name} style={{ margin: "0 0 3px", fontSize: 11, display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <span>
-                {bill.name} <span style={{ color: "#71717a" }}>· {bill.detail}</span>
-              </span>
-              <strong>{bill.amount}</strong>
-            </p>
-          ))}
-        </section>
+      <h2 style={{ fontSize: 14, margin: "14px 0 4px", color: "#6d28d9" }}>Tarjeta del período anterior</h2>
+      <p style={{ margin: "0 0 4px", fontSize: 11, color: "#3f3f46" }}>
+        Del {day(cardFrom)} al {day(cardTo)}. Se paga con el sueldo de {monthLabel}.
+      </p>
+      <p style={{ margin: "0 0 8px", fontSize: 11 }}>{cardNote}</p>
+      {cardGroups.map((group) => (
+        <GroupBlock key={group.name} group={group} cards={cards} papaId={papaId} tone="#6d28d9" card />
+      ))}
+      <p style={{ margin: "6px 0 0", fontSize: 11, display: "flex", justifyContent: "space-between" }}>
+        <span>Consumos del período</span>
+        <strong>{pesos(chargesSum)}</strong>
+      </p>
+      {cardPaidAmount > 0 ? (
+        <p style={{ margin: "2px 0 0", fontSize: 11, display: "flex", justifyContent: "space-between" }}>
+          <span>Ya transferido</span>
+          <strong>{pesos(cardPaidAmount)}</strong>
+        </p>
       ) : null}
+      {cardUnpaid > 0 ? (
+        <p style={{ margin: "2px 0 0", fontSize: 11, display: "flex", justifyContent: "space-between" }}>
+          <span>Todavía sin transferir</span>
+          <strong>{pesos(cardUnpaid)}</strong>
+        </p>
+      ) : null}
+      <Sum label="Descuenta este sueldo" value={pesos(tarjeta)} />
+
+      <h2 style={{ fontSize: 14, margin: "14px 0 4px", color: "#3730a3" }}>Salidas de este mes</h2>
+      <p style={{ margin: "0 0 8px", fontSize: 11, color: "#3f3f46" }}>
+        Servicios y cada salida en efectivo o transferencia. La transferencia de la tarjeta está en el bloque de arriba.
+      </p>
+      {outGroups.length ? (
+        outGroups.map((group) => <GroupBlock key={group.name} group={group} cards={cards} papaId={papaId} tone="#3730a3" />)
+      ) : (
+        <p style={{ margin: 0, fontSize: 11, color: "#71717a" }}>Todavía no hay salidas cargadas en este mes.</p>
+      )}
+      <Sum label="Total de salidas" value={pesos(salidas)} />
+
+      <section style={{ marginTop: 14, border: "2px solid #0f766e", borderRadius: 8, padding: 10 }}>
+        <h2 style={{ margin: 0, fontSize: 14 }}>{estimated ? "Te quedaría" : "Te queda"}</h2>
+        <p style={{ margin: "8px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
+          <span>Entra</span>
+          <span>{pesos(entra)}</span>
+        </p>
+        <p style={{ margin: "2px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
+          <span>Tarjeta del período anterior</span>
+          <span>− {pesos(tarjeta)}</span>
+        </p>
+        <p style={{ margin: "2px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
+          <span>Salidas de este mes</span>
+          <span>− {pesos(salidas)}</span>
+        </p>
+        <p style={{ margin: "8px 0 0", fontSize: 18, display: "flex", justifyContent: "space-between", color: "#047857" }}>
+          <strong>{estimated ? "Te quedaría" : "Te queda"}</strong>
+          <strong>{pesos(queda)}</strong>
+        </p>
+      </section>
 
       <p style={{ marginTop: 16, fontSize: 9, color: "#71717a" }}>SS Cuentas {APP_VERSION}</p>
     </article>
+  );
+}
+
+function Total({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{ border: "1px solid #e4e4e7", borderRadius: 8, padding: 6 }}>
+      <p style={{ margin: 0, fontSize: 9, color: "#71717a" }}>{label}</p>
+      <p style={{ margin: "3px 0 0", fontSize: 12, fontWeight: 700, color }}>{value}</p>
+    </div>
+  );
+}
+
+function Sum({ label, value }: { label: string; value: string }) {
+  return (
+    <p
+      style={{
+        margin: "6px 0 0",
+        paddingTop: 4,
+        borderTop: "1px solid #e4e4e7",
+        fontSize: 12,
+        display: "flex",
+        justifyContent: "space-between",
+      }}
+    >
+      <strong>{label}</strong>
+      <strong>{value}</strong>
+    </p>
+  );
+}
+
+function GroupBlock({
+  group,
+  cards,
+  papaId,
+  tone,
+  card = false,
+}: {
+  group: Group;
+  cards: CreditCard[];
+  papaId: string | null;
+  tone: string;
+  card?: boolean;
+}) {
+  const color = categoryColor(group.name);
+  return (
+    <section style={{ breakInside: "avoid", marginBottom: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 8,
+          background: color.bg,
+          color: color.fg,
+          border: `1px solid ${color.border}`,
+          borderRadius: 6,
+          padding: "4px 8px",
+          fontSize: 12,
+          fontWeight: 650,
+        }}
+      >
+        <span>{group.name}</span>
+        <span>{pesos(group.total)}</span>
+      </div>
+      {group.txs.map((tx) => {
+        const own = cards.find((item) => item.id === tx.credit_card_id);
+        const method = card ? (own?.id === papaId ? own?.name || "Extensión" : "Tu Visa") : paymentMethodLabel(tx.payment_method);
+        const note = observationOf(tx.notes);
+        const pending = isProjectedTx(tx);
+        return (
+          <div
+            key={tx.id}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+              borderBottom: "1px solid #e4e4e7",
+              padding: "3px 4px",
+              fontSize: 11,
+              breakInside: "avoid",
+            }}
+          >
+            <span>
+              <span style={{ color: "#71717a" }}>{day(tx.occurred_on)} </span>
+              {cleanConceptName(tx.concept)}
+              {note ? <span style={{ color: "#71717a" }}> · {note}</span> : null}
+              <span style={{ color: "#71717a" }}> · {method}</span>
+              {pending ? <span style={{ color: "#a16207" }}> · Pendiente</span> : null}
+            </span>
+            <strong style={{ color: tone, whiteSpace: "nowrap" }}>−{formatMoney(Number(tx.amount), tx.currency)}</strong>
+          </div>
+        );
+      })}
+    </section>
   );
 }

@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 export function EdesurMeterPhotos({ month, monthLabel }: { month: string; monthLabel: string }) {
   const { edesurPhotos, addEdesurPhoto, removeEdesurPhoto } = useFinance();
-  const photos = edesurPhotos.filter((photo) => photo.month === month);
+  const photos = edesurPhotos.filter((photo) => photo.month === month && photo.label !== "factura");
   const photoKey = photos.map((photo) => `${photo.id}:${photo.path}`).join("|");
   const [who, setWho] = useState<EdesurPhotoLabel>("mio");
   const [busy, setBusy] = useState(false);

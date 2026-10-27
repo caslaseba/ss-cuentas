@@ -125,6 +125,7 @@ export function useMonthView(initial?: Date) {
 
   const closeOn = closeOf(cursor);
   const prevClose = closeOf(shiftMonth(cursor, -1));
+  const salaryPeriod = describedPeriod(shiftMonth(cursor, -1), closeOf);
   const closingDay = Number(closeOn.slice(8, 10)) || closingDayDefault;
   const period = describedPeriod(cursor, closeOf);
   const laterPeriod = describedPeriod(shiftMonth(cursor, 1), closeOf);
@@ -260,6 +261,9 @@ export function useMonthView(initial?: Date) {
     canGoPrev: monthKey(cursor) > BOOKS_START_MONTH,
     cardDue,
     cardBillTx: unpaidNow,
+    salaryCardTx: hitsNow,
+    salaryCardFrom: salaryPeriod.start,
+    salaryCardTo: salaryPeriod.end,
     settledCardIds: [...settledCardIds],
     tarjetaAbierta,
     visaMia,
