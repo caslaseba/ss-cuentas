@@ -1,4 +1,4 @@
-const CACHE = "ss-cuentas-v7";
+const CACHE = "ss-cuentas-v8";
 const APP_SHELL = ["/", "/login", "/offline", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {

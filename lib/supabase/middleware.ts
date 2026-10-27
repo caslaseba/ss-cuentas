@@ -65,6 +65,7 @@ export async function updateSession(request: NextRequest) {
     path.startsWith("/api/fx") ||
     path.startsWith("/icons") ||
     path.endsWith(".js") ||
+    path.endsWith(".mjs") ||
     path.endsWith(".css") ||
     path.endsWith(".png") ||
     path.endsWith(".svg") ||
