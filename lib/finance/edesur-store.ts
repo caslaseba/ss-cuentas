@@ -15,16 +15,17 @@ function asMonths(value: unknown): EdesurMonth[] {
     const totalBill = Number(row.totalBill);
     const mineKwh = Number(row.mineKwh);
     const brotherKwh = Number(row.brotherKwh);
-    if (![totalKwh, totalBill, mineKwh, brotherKwh].every((n) => Number.isFinite(n) && n >= 0)) return [];
+    const brother2Kwh = Number(row.brother2Kwh ?? 0);
+    if (![totalKwh, totalBill, mineKwh, brotherKwh, brother2Kwh].every((n) => Number.isFinite(n) && n >= 0)) return [];
     if (!(totalKwh > 0)) return [];
-    return [{ month: row.month, totalKwh, totalBill, mineKwh, brotherKwh }];
+    return [{ month: row.month, totalKwh, totalBill, mineKwh, brotherKwh, brother2Kwh }];
   });
 }
 
 async function readTable(supabase: SupabaseClient): Promise<EdesurMonth[] | null> {
   const { data, error } = await supabase
     .from("edesur_months")
-    .select("month_key, total_kwh, total_bill, mine_kwh, brother_kwh");
+    .select("month_key, total_kwh, total_bill, mine_kwh, brother_kwh, brother_kwh_2");
   if (error) return null;
   return asMonths(
     (data ?? []).map((row) => ({
@@ -33,6 +34,7 @@ async function readTable(supabase: SupabaseClient): Promise<EdesurMonth[] | null
       totalBill: row.total_bill,
       mineKwh: row.mine_kwh,
       brotherKwh: row.brother_kwh,
+      brother2Kwh: row.brother_kwh_2,
     })),
   );
 }
@@ -77,6 +79,7 @@ async function writeTable(supabase: SupabaseClient, userId: string, months: Edes
         total_bill: item.totalBill,
         mine_kwh: item.mineKwh,
         brother_kwh: item.brotherKwh,
+        brother_kwh_2: item.brother2Kwh,
       },
       { onConflict: "user_id,month_key" },
     );

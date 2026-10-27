@@ -4,7 +4,7 @@ import type { EdesurPhoto, EdesurPhotoLabel } from "@/lib/finance/edesur";
 export const EDESUR_METER_BUCKET = "edesur-meters";
 
 function asLabel(value: unknown): EdesurPhotoLabel | null {
-  return value === "mio" || value === "hermano" || value === "factura" ? value : null;
+  return value === "mio" || value === "hermano" || value === "hermano2" || value === "factura" ? value : null;
 }
 
 export function asEdesurPhotos(value: unknown): EdesurPhoto[] {

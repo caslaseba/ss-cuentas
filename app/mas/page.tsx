@@ -36,6 +36,15 @@ export default function MasPage() {
         </p>
       </div>
 
+      <div className="space-y-2">
+        <Button asChild className="w-full">
+          <Link href="/edesur">Informe EDESUR</Link>
+        </Button>
+        <p className="text-sm text-muted-foreground">
+          Fotos de los medidores, la portada de la factura y cuánto paga cada uno.
+        </p>
+      </div>
+
       {beta ? null : <WalletBalances />}
 
       <CardManager />
