@@ -11,7 +11,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
-import { edesurPhotoLabel, isEdesurName, splitBillByKwh, type EdesurPhoto, type EdesurPhotoLabel } from "@/lib/finance/edesur";
+import {
+  edesurPhotoLabel,
+  formatReadingStamp,
+  isEdesurName,
+  meterConsumption,
+  readingInputValue,
+  readingIsoFromInput,
+  splitBillByKwh,
+  type EdesurMonth,
+  type EdesurPhoto,
+  type EdesurPhotoLabel,
+} from "@/lib/finance/edesur";
 import { signEdesurPhoto } from "@/lib/finance/edesur-photos";
 import { shownRecurring } from "@/lib/finance/recurring";
 import { APP_VERSION } from "@/lib/version";
@@ -20,12 +31,19 @@ import { hasSupabaseConfig } from "@/lib/supabase/env";
 import { formatMoney, monthKey } from "@/lib/utils";
 import { shiftMonth } from "@/lib/finance/wallet";
 
-const SLOTS: { label: EdesurPhotoLabel; title: string }[] = [
-  { label: "hermano", title: "Medidor 1 de mi hermano" },
-  { label: "hermano2", title: "Medidor 2 de mi hermano" },
-  { label: "mio", title: "Mi medidor" },
-  { label: "factura", title: "Portada de la factura" },
+const METERS = [
+  { label: "hermano" as const, title: "Medidor LEO casa", reading: "brotherReading" as const, at: "brotherReadAt" as const },
+  { label: "hermano2" as const, title: "Medidor LEO's Garage", reading: "brother2Reading" as const, at: "brother2ReadAt" as const },
+  { label: "mio" as const, title: "Medidor Seba", reading: "mineReading" as const, at: "mineReadAt" as const },
 ];
+
+type MeterLabel = (typeof METERS)[number]["label"];
+
+type MeterDraft = { reading: string; at: string; kwh: string };
+
+function emptyDraft(): MeterDraft {
+  return { reading: "", at: "", kwh: "" };
+}
 
 function kwhText(value: number) {
   return value.toLocaleString("es-AR", { maximumFractionDigits: 2 });
@@ -44,6 +62,10 @@ function blankIfZero(value: number) {
   return value > 0 ? formatAmountFromNumber(value) : "";
 }
 
+function readingText(value: number | null | undefined) {
+  return value == null ? "" : formatAmountFromNumber(value);
+}
+
 export function EdesurDesk({ initial }: { initial?: Date }) {
   const router = useRouter();
   const view = useMonthView(initial);
@@ -60,10 +82,27 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     transactions,
   } = view;
   const month = monthKey(cursor);
+  const previousDate = shiftMonth(cursor, -1);
+  const previousKey = monthKey(previousDate);
   const monthLabel = format(cursor, "MMMM yyyy", { locale: es });
+  const previousLabel = format(previousDate, "MMMM yyyy", { locale: es });
   const saved = edesurMonths.find((item) => item.month === month) ?? null;
+  const previous = edesurMonths.find((item) => item.month === previousKey) ?? null;
   const savedKey = saved
-    ? `${saved.month}:${saved.totalKwh}:${saved.totalBill}:${saved.mineKwh}:${saved.brotherKwh}:${saved.brother2Kwh ?? 0}`
+    ? [
+        saved.month,
+        saved.totalKwh,
+        saved.totalBill,
+        saved.mineKwh,
+        saved.brotherKwh,
+        saved.brother2Kwh,
+        saved.brotherReading,
+        saved.brotherReadAt,
+        saved.brother2Reading,
+        saved.brother2ReadAt,
+        saved.mineReading,
+        saved.mineReadAt,
+      ].join(":")
     : month;
   const billHint = (() => {
     const item = recurring.find((row) => isEdesurName(row.name));
@@ -73,9 +112,11 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
 
   const [totalKwh, setTotalKwh] = useState("");
   const [bill, setBill] = useState("");
-  const [brother1, setBrother1] = useState("");
-  const [brother2, setBrother2] = useState("");
-  const [mine, setMine] = useState("");
+  const [drafts, setDrafts] = useState<Record<MeterLabel, MeterDraft>>({
+    hermano: emptyDraft(),
+    hermano2: emptyDraft(),
+    mio: emptyDraft(),
+  });
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [urls, setUrls] = useState<Record<string, string>>({});
@@ -85,15 +126,27 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     if (saved) {
       setTotalKwh(blankIfZero(saved.totalKwh));
       setBill(blankIfZero(saved.totalBill));
-      setMine(blankIfZero(saved.mineKwh));
-      setBrother1(blankIfZero(saved.brotherKwh));
-      setBrother2(blankIfZero(saved.brother2Kwh ?? 0));
+      setDrafts({
+        hermano: {
+          reading: readingText(saved.brotherReading),
+          at: readingInputValue(saved.brotherReadAt),
+          kwh: blankIfZero(saved.brotherKwh),
+        },
+        hermano2: {
+          reading: readingText(saved.brother2Reading),
+          at: readingInputValue(saved.brother2ReadAt),
+          kwh: blankIfZero(saved.brother2Kwh),
+        },
+        mio: {
+          reading: readingText(saved.mineReading),
+          at: readingInputValue(saved.mineReadAt),
+          kwh: blankIfZero(saved.mineKwh),
+        },
+      });
       return;
     }
     setTotalKwh("");
-    setMine("");
-    setBrother1("");
-    setBrother2("");
+    setDrafts({ hermano: emptyDraft(), hermano2: emptyDraft(), mio: emptyDraft() });
     setBill(billHint > 0 ? formatAmountFromNumber(billHint) : "");
     // savedKey cambia al pasar de mes o al guardar.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -104,18 +157,18 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     setBill((current) => current || formatAmountFromNumber(billHint));
   }, [billHint, saved]);
 
-  const photos = edesurPhotos.filter((photo) => photo.month === month);
-  const photoKey = photos.map((photo) => `${photo.id}:${photo.path}`).join("|");
+  const comparedPhotos = edesurPhotos.filter((photo) => photo.month === month || photo.month === previousKey);
+  const photoKey = comparedPhotos.map((photo) => `${photo.id}:${photo.path}`).join("|");
 
   useEffect(() => {
-    if (!photos.length || !hasSupabaseConfig()) {
+    if (!comparedPhotos.length || !hasSupabaseConfig()) {
       setUrls({});
       return;
     }
     let cancel = false;
     const supabase = createClient();
     void Promise.all(
-      photos.map(async (photo) => {
+      comparedPhotos.map(async (photo) => {
         const url = await signEdesurPhoto(supabase, photo.path);
         return [photo.id, url] as const;
       }),
@@ -126,29 +179,85 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     return () => {
       cancel = true;
     };
-    // photoKey identifica las fotos de este mes.
+    // photoKey identifica las fotos de este mes y del anterior.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [photoKey]);
 
+  function previousReading(label: MeterLabel) {
+    if (!previous) return null;
+    if (label === "hermano") return previous.brotherReading;
+    if (label === "hermano2") return previous.brother2Reading;
+    return previous.mineReading;
+  }
+
+  function previousStamp(label: MeterLabel) {
+    if (!previous) return null;
+    if (label === "hermano") return previous.brotherReadAt;
+    if (label === "hermano2") return previous.brother2ReadAt;
+    return previous.mineReadAt;
+  }
+
+  function consumptionOf(label: MeterLabel) {
+    const draft = drafts[label];
+    const current = draft.reading.trim() ? parseAmountInput(draft.reading) : null;
+    const diff = meterConsumption(previousReading(label), current);
+    if (diff != null) return { kwh: diff, fromReadings: true as const };
+    return { kwh: parseAmountInput(draft.kwh), fromReadings: false as const };
+  }
+
+  const consumptions = {
+    hermano: consumptionOf("hermano"),
+    hermano2: consumptionOf("hermano2"),
+    mio: consumptionOf("mio"),
+  };
+  const negative = METERS.some((meter) => consumptions[meter.label].fromReadings && consumptions[meter.label].kwh < 0);
   const numbers = {
     totalKwh: parseAmountInput(totalKwh),
     totalBill: parseAmountInput(bill),
-    mineKwh: parseAmountInput(mine),
-    brotherKwh: parseAmountInput(brother1),
-    brother2Kwh: parseAmountInput(brother2),
+    brotherKwh: Math.max(0, consumptions.hermano.kwh),
+    brother2Kwh: Math.max(0, consumptions.hermano2.kwh),
+    mineKwh: Math.max(0, consumptions.mio.kwh),
   };
   const split = splitBillByKwh(numbers);
+
+  function payload(): EdesurMonth {
+    return {
+      month,
+      ...numbers,
+      brotherReading: drafts.hermano.reading.trim() ? parseAmountInput(drafts.hermano.reading) : null,
+      brotherReadAt: readingIsoFromInput(drafts.hermano.at),
+      brother2Reading: drafts.hermano2.reading.trim() ? parseAmountInput(drafts.hermano2.reading) : null,
+      brother2ReadAt: readingIsoFromInput(drafts.hermano2.at),
+      mineReading: drafts.mio.reading.trim() ? parseAmountInput(drafts.mio.reading) : null,
+      mineReadAt: readingIsoFromInput(drafts.mio.at),
+    };
+  }
 
   function goMonth(delta: number) {
     const next = shiftMonth(cursor, delta);
     router.replace(`/edesur?mes=${monthKey(next)}`, { scroll: false });
   }
 
+  function updateDraft(label: MeterLabel, patch: Partial<MeterDraft>) {
+    setDrafts((current) => {
+      const next = { ...current[label], ...patch };
+      if (patch.reading != null && patch.reading.trim() && !next.at) next.at = readingInputValue(new Date().toISOString());
+      return { ...current, [label]: next };
+    });
+  }
+
   async function save() {
-    if (!split || split.exceeds || saving) return false;
+    if (negative) {
+      toast.error("Una lectura de este mes es menor que la del mes anterior.");
+      return false;
+    }
+    if (split?.exceeds) {
+      toast.error("Los kWh de los medidores superan el total de la factura.");
+      return false;
+    }
     setSaving(true);
     try {
-      await saveEdesurMonth({ month, ...numbers });
+      await saveEdesurMonth(payload());
       toast.success(`Informe de EDESUR guardado en ${monthLabel}.`);
       return true;
     } catch (err) {
@@ -160,17 +269,23 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
   }
 
   async function download() {
-    if (!split || split.exceeds) {
-      toast.error(split?.exceeds ? "Los kWh de los medidores superan el total de la factura." : "Completá el total de la factura y los kWh.");
+    if (!split || split.exceeds || negative) {
+      toast.error(
+        negative
+          ? "Una lectura de este mes es menor que la del mes anterior."
+          : split?.exceeds
+            ? "Los kWh de los medidores superan el total de la factura."
+            : "Completá el total de la factura y los kWh.",
+      );
       return;
     }
     const ok = await save();
     if (!ok) return;
-    const previous = document.title;
+    const previousTitle = document.title;
     document.body.dataset.print = "edesur";
     document.title = `EDESUR ${monthLabel}`;
     const restore = () => {
-      document.title = previous;
+      document.title = previousTitle;
       delete document.body.dataset.print;
       window.removeEventListener("afterprint", restore);
     };
@@ -183,6 +298,9 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     setBusy(true);
     try {
       await addEdesurPhoto(month, label, file);
+      if (label !== "factura") {
+        updateDraft(label, { at: drafts[label].at || readingInputValue(new Date().toISOString()) });
+      }
       toast.success(`${edesurPhotoLabel(label)} guardada en ${monthLabel}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo guardar la foto");
@@ -203,6 +321,8 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     }
   }
 
+  const facturaPhotos = comparedPhotos.filter((photo) => photo.month === month && photo.label === "factura");
+
   return (
     <div className="mx-auto w-full min-w-0 max-w-lg space-y-4 md:max-w-2xl">
       <div className="no-print space-y-3">
@@ -217,8 +337,7 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Informe EDESUR</h1>
           <p className="text-sm text-muted-foreground">
-            Fotos de los dos medidores de tu hermano, el tuyo y la portada de la factura. Después, el total y los kWh.
-            El PDF se arma en esta pantalla, aparte de los movimientos.
+            Cada medidor muestra la foto y la lectura del mes anterior al lado de la de este mes. La diferencia es lo que se consumió.
           </p>
         </div>
         <div className="flex items-center justify-between gap-1">
@@ -231,73 +350,151 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {SLOTS.map((slot) => {
-            const slotPhotos = photos.filter((photo) => photo.label === slot.label);
-            return (
-              <section key={slot.label} className="rounded-md border border-border p-2">
-                <h2 className="text-xs font-medium">{slot.title}</h2>
-                <div className="mt-2 flex gap-2">
-                  <label className="flex-1">
-                    <input
-                      className="sr-only"
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      disabled={busy}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        event.target.value = "";
-                        void onFile(slot.label, file);
-                      }}
-                    />
-                    <span className="inline-flex h-8 w-full cursor-pointer items-center justify-center rounded-md bg-primary px-2 text-[11px] font-medium text-primary-foreground">
-                      {busy ? "Guardando…" : "Sacar foto"}
-                    </span>
-                  </label>
-                  <label className="flex-1">
-                    <input
-                      className="sr-only"
-                      type="file"
-                      accept="image/*"
-                      disabled={busy}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        event.target.value = "";
-                        void onFile(slot.label, file);
-                      }}
-                    />
-                    <span className="inline-flex h-8 w-full cursor-pointer items-center justify-center rounded-md border border-border px-2 text-[11px] font-medium">
-                      Galería
-                    </span>
-                  </label>
-                </div>
-                {slotPhotos.length ? (
-                  <div className="mt-2 space-y-2">
-                    {slotPhotos.map((photo) => (
-                      <figure key={photo.id} className="overflow-hidden rounded-md border border-border bg-muted">
-                        <button type="button" className="block w-full" onClick={() => urls[photo.id] && setZoom(photo)}>
-                          {urls[photo.id] ? (
-                            <img src={urls[photo.id]} alt={slot.title} className="aspect-[4/3] w-full bg-white object-contain" />
-                          ) : (
-                            <span className="block aspect-[4/3] w-full bg-muted" />
-                          )}
-                        </button>
-                        <figcaption className="flex justify-end px-1.5 py-1">
-                          <button type="button" className="text-[10px] font-medium text-destructive" disabled={busy} onClick={() => void remove(photo)}>
-                            Quitar
-                          </button>
-                        </figcaption>
-                      </figure>
-                    ))}
+        {METERS.map((meter) => {
+          const before = comparedPhotos.filter((photo) => photo.month === previousKey && photo.label === meter.label);
+          const now = comparedPhotos.filter((photo) => photo.month === month && photo.label === meter.label);
+          const prior = previousReading(meter.label);
+          const used = consumptions[meter.label];
+          return (
+            <section key={meter.label} className="space-y-2 rounded-md border border-border p-2">
+              <h2 className="text-sm font-medium">{meter.title}</h2>
+              <div className="grid grid-cols-2 gap-2">
+                <PhotoColumn
+                  title={previousLabel}
+                  photos={before}
+                  urls={urls}
+                  busy={busy}
+                  onZoom={setZoom}
+                  onRemove={remove}
+                />
+                <div>
+                  <p className="text-[10px] font-medium capitalize text-muted-foreground">{monthLabel}</p>
+                  <div className="mt-1 flex flex-col gap-1">
+                    <label>
+                      <input
+                        className="sr-only"
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        disabled={busy}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          event.target.value = "";
+                          void onFile(meter.label, file);
+                        }}
+                      />
+                      <span className="inline-flex h-8 w-full cursor-pointer items-center justify-center rounded-md bg-primary px-2 text-[11px] font-medium text-primary-foreground">
+                        {busy ? "Guardando…" : "Sacar foto"}
+                      </span>
+                    </label>
+                    <label>
+                      <input
+                        className="sr-only"
+                        type="file"
+                        accept="image/*"
+                        disabled={busy}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          event.target.value = "";
+                          void onFile(meter.label, file);
+                        }}
+                      />
+                      <span className="inline-flex h-8 w-full cursor-pointer items-center justify-center rounded-md border border-border px-2 text-[11px] font-medium">
+                        Galería
+                      </span>
+                    </label>
                   </div>
-                ) : (
-                  <p className="mt-2 text-[11px] text-muted-foreground">Todavía no hay foto.</p>
-                )}
-              </section>
-            );
-          })}
-        </div>
+                  <PhotoList photos={now} urls={urls} busy={busy} onZoom={setZoom} onRemove={remove} />
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {prior == null
+                  ? `No hay lectura de ${previousLabel}.`
+                  : `Lectura de ${previousLabel}: ${kwhText(prior)} kWh${previousStamp(meter.label) ? ` · ${formatReadingStamp(previousStamp(meter.label))}` : ""}`}
+              </p>
+              <div>
+                <Label htmlFor={`${meter.label}-reading`}>Lectura de este mes</Label>
+                <Input
+                  id={`${meter.label}-reading`}
+                  className="mt-1.5"
+                  inputMode="decimal"
+                  value={drafts[meter.label].reading}
+                  onChange={(event) => updateDraft(meter.label, { reading: event.target.value })}
+                  placeholder="El número que marca el medidor"
+                />
+              </div>
+              <div>
+                <Label htmlFor={`${meter.label}-at`}>Fecha y hora de la medición</Label>
+                <Input
+                  id={`${meter.label}-at`}
+                  className="mt-1.5"
+                  type="datetime-local"
+                  value={drafts[meter.label].at}
+                  onChange={(event) => updateDraft(meter.label, { at: event.target.value })}
+                />
+              </div>
+              {used.fromReadings ? (
+                <p className={`text-sm font-medium ${used.kwh < 0 ? "text-destructive" : ""}`}>
+                  {used.kwh < 0
+                    ? "La lectura de este mes es menor que la anterior."
+                    : `Consumió ${kwhText(used.kwh)} kWh entre las dos mediciones.`}
+                </p>
+              ) : (
+                <div>
+                  <Label htmlFor={`${meter.label}-kwh`}>kWh de este período</Label>
+                  <Input
+                    id={`${meter.label}-kwh`}
+                    className="mt-1.5"
+                    inputMode="decimal"
+                    value={drafts[meter.label].kwh}
+                    onChange={(event) => updateDraft(meter.label, { kwh: event.target.value })}
+                    placeholder="Hasta tener la lectura anterior"
+                  />
+                </div>
+              )}
+            </section>
+          );
+        })}
+
+        <section className="space-y-2 rounded-md border border-border p-2">
+          <h2 className="text-sm font-medium">Portada de la factura</h2>
+          <div className="flex gap-2">
+            <label className="flex-1">
+              <input
+                className="sr-only"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                disabled={busy}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  void onFile("factura", file);
+                }}
+              />
+              <span className="inline-flex h-8 w-full cursor-pointer items-center justify-center rounded-md bg-primary px-2 text-[11px] font-medium text-primary-foreground">
+                {busy ? "Guardando…" : "Sacar foto"}
+              </span>
+            </label>
+            <label className="flex-1">
+              <input
+                className="sr-only"
+                type="file"
+                accept="image/*"
+                disabled={busy}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  void onFile("factura", file);
+                }}
+              />
+              <span className="inline-flex h-8 w-full cursor-pointer items-center justify-center rounded-md border border-border px-2 text-[11px] font-medium">
+                Galería
+              </span>
+            </label>
+          </div>
+          <PhotoList photos={facturaPhotos} urls={urls} busy={busy} onZoom={setZoom} onRemove={remove} />
+        </section>
 
         <div className="space-y-2 rounded-md border border-border p-3">
           <h2 className="text-sm font-medium">Datos de la factura</h2>
@@ -306,39 +503,41 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
             <Input id="edesur-bill" className="mt-1.5" inputMode="decimal" value={bill} onChange={(event) => setBill(event.target.value)} placeholder="Ej. 496.293,54" />
           </div>
           <div>
-            <Label htmlFor="edesur-kwh">Total de kWh consumidos</Label>
+            <Label htmlFor="edesur-kwh">Total de kWh de la factura</Label>
             <Input id="edesur-kwh" className="mt-1.5" inputMode="decimal" value={totalKwh} onChange={(event) => setTotalKwh(event.target.value)} placeholder="Ej. 850" />
           </div>
-          <div>
-            <Label htmlFor="edesur-b1">kWh del medidor 1 de mi hermano</Label>
-            <Input id="edesur-b1" className="mt-1.5" inputMode="decimal" value={brother1} onChange={(event) => setBrother1(event.target.value)} />
-          </div>
-          <div>
-            <Label htmlFor="edesur-b2">kWh del medidor 2 de mi hermano</Label>
-            <Input id="edesur-b2" className="mt-1.5" inputMode="decimal" value={brother2} onChange={(event) => setBrother2(event.target.value)} />
-          </div>
-          <div>
-            <Label htmlFor="edesur-mine">kWh de mi medidor</Label>
-            <Input id="edesur-mine" className="mt-1.5" inputMode="decimal" value={mine} onChange={(event) => setMine(event.target.value)} />
-          </div>
-          {split?.exceeds ? (
-            <p className="text-xs text-destructive">Entre los tres medidores superan los kWh totales de la factura.</p>
-          ) : null}
+          {split?.exceeds ? <p className="text-xs text-destructive">Entre los tres medidores superan los kWh totales de la factura.</p> : null}
           <div className="flex gap-2">
-            <Button type="button" className="flex-1" disabled={!split || split.exceeds || saving} onClick={() => void save()}>
+            <Button type="button" className="flex-1" disabled={saving} onClick={() => void save()}>
               {saving ? "Guardando…" : "Guardar"}
             </Button>
-            <Button type="button" className="flex-1" variant="outline" disabled={!split || split.exceeds || saving} onClick={() => void download()}>
+            <Button type="button" className="flex-1" variant="outline" disabled={saving} onClick={() => void download()}>
               Descargar PDF
             </Button>
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            Descargar abre el diálogo del navegador. Ahí elegís Guardar como PDF.
-          </p>
+          <p className="text-[11px] text-muted-foreground">Descargar abre el diálogo del navegador. Ahí elegís Guardar como PDF.</p>
         </div>
       </div>
 
-      <EdesurSheet monthLabel={monthLabel} numbers={numbers} split={split} photos={photos} urls={urls} />
+      <EdesurSheet
+        monthLabel={monthLabel}
+        previousLabel={previousLabel}
+        numbers={numbers}
+        split={split}
+        meters={METERS.map((meter) => ({
+          title: meter.title,
+          label: meter.label,
+          previousUrls: photoUrls(comparedPhotos, previousKey, meter.label, urls),
+          currentUrls: photoUrls(comparedPhotos, month, meter.label, urls),
+          previousReading: previousReading(meter.label),
+          previousAt: previousStamp(meter.label),
+          currentReading: drafts[meter.label].reading.trim() ? parseAmountInput(drafts[meter.label].reading) : null,
+          currentAt: readingIsoFromInput(drafts[meter.label].at),
+          consumed: consumptions[meter.label].kwh,
+          fromReadings: consumptions[meter.label].fromReadings,
+        }))}
+        facturaUrls={photoUrls(comparedPhotos, month, "factura", urls)}
+      />
 
       {zoom && urls[zoom.id] ? (
         <div className="no-print fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-3" onClick={() => setZoom(null)}>
@@ -357,25 +556,103 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
   );
 }
 
-function EdesurSheet({
-  monthLabel,
-  numbers,
-  split,
+function photoUrls(photos: EdesurPhoto[], month: string, label: EdesurPhotoLabel, urls: Record<string, string>) {
+  return photos
+    .filter((photo) => photo.month === month && photo.label === label)
+    .map((photo) => urls[photo.id])
+    .filter((url): url is string => Boolean(url));
+}
+
+function PhotoColumn({
+  title,
   photos,
   urls,
+  busy,
+  onZoom,
+  onRemove,
 }: {
-  monthLabel: string;
-  numbers: { totalKwh: number; totalBill: number; mineKwh: number; brotherKwh: number; brother2Kwh: number };
-  split: ReturnType<typeof splitBillByKwh>;
+  title: string;
   photos: EdesurPhoto[];
   urls: Record<string, string>;
+  busy: boolean;
+  onZoom: (photo: EdesurPhoto) => void;
+  onRemove: (photo: EdesurPhoto) => void;
 }) {
-  const groups = SLOTS.map((slot) => ({
-    ...slot,
-    urls: photos.filter((photo) => photo.label === slot.label).map((photo) => urls[photo.id]).filter((url): url is string => Boolean(url)),
-  }));
-  const hasPhoto = groups.some((group) => group.urls.length > 0);
+  return (
+    <div>
+      <p className="text-[10px] font-medium capitalize text-muted-foreground">{title}</p>
+      <PhotoList photos={photos} urls={urls} busy={busy} onZoom={onZoom} onRemove={onRemove} readOnly />
+    </div>
+  );
+}
 
+function PhotoList({
+  photos,
+  urls,
+  busy,
+  onZoom,
+  onRemove,
+  readOnly = false,
+}: {
+  photos: EdesurPhoto[];
+  urls: Record<string, string>;
+  busy: boolean;
+  onZoom: (photo: EdesurPhoto) => void;
+  onRemove: (photo: EdesurPhoto) => void;
+  readOnly?: boolean;
+}) {
+  if (!photos.length) return <p className="mt-1 text-[11px] text-muted-foreground">Sin foto.</p>;
+  return (
+    <div className="mt-1 space-y-2">
+      {photos.map((photo) => (
+        <figure key={photo.id} className="overflow-hidden rounded-md border border-border bg-white">
+          <button type="button" className="block w-full" onClick={() => urls[photo.id] && onZoom(photo)}>
+            {urls[photo.id] ? (
+              <img src={urls[photo.id]} alt={edesurPhotoLabel(photo.label)} className="aspect-[4/3] w-full object-contain" />
+            ) : (
+              <span className="block aspect-[4/3] w-full bg-muted" />
+            )}
+          </button>
+          {readOnly ? null : (
+            <figcaption className="flex justify-end px-1.5 py-1">
+              <button type="button" className="text-[10px] font-medium text-destructive" disabled={busy} onClick={() => void onRemove(photo)}>
+                Quitar
+              </button>
+            </figcaption>
+          )}
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+function EdesurSheet({
+  monthLabel,
+  previousLabel,
+  numbers,
+  split,
+  meters,
+  facturaUrls,
+}: {
+  monthLabel: string;
+  previousLabel: string;
+  numbers: { totalKwh: number; totalBill: number; mineKwh: number; brotherKwh: number; brother2Kwh: number };
+  split: ReturnType<typeof splitBillByKwh>;
+  meters: {
+    title: string;
+    label: MeterLabel;
+    previousUrls: string[];
+    currentUrls: string[];
+    previousReading: number | null;
+    previousAt: string | null;
+    currentReading: number | null;
+    currentAt: string | null;
+    consumed: number;
+    fromReadings: boolean;
+  }[];
+  facturaUrls: string[];
+}) {
+  const hasPhoto = meters.some((meter) => meter.previousUrls.length || meter.currentUrls.length) || facturaUrls.length > 0;
   return (
     <article id="edesur-report" className="rounded-md bg-white px-4 py-4 text-black shadow-sm">
       <header style={{ background: "#0f766e", color: "#fff", borderRadius: 10, padding: "14px 16px" }}>
@@ -384,33 +661,42 @@ function EdesurSheet({
         <p style={{ margin: "4px 0 0", fontSize: 14, textTransform: "capitalize" }}>{monthLabel}</p>
       </header>
 
-      <section style={{ marginTop: 14 }}>
-        {groups.map((group) => (
-          <div key={group.label} style={{ marginBottom: 12, breakInside: "avoid" }}>
-            <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>{group.title}</h3>
-            {group.urls.length ? (
-              group.urls.map((url) => (
-                <img
-                  key={url}
-                  src={url}
-                  alt={group.title}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    maxHeight: "125mm",
-                    objectFit: "contain",
-                    background: "#f4f4f5",
-                    border: "1px solid #d4d4d8",
-                    borderRadius: 8,
-                    marginBottom: 8,
-                  }}
-                />
-              ))
-            ) : (
-              <p style={{ margin: 0, fontSize: 12, color: "#71717a" }}>Sin foto en este mes.</p>
-            )}
+      {meters.map((meter) => (
+        <section key={meter.label} style={{ marginTop: 14, breakInside: "avoid" }}>
+          <h3 style={{ margin: "0 0 6px", fontSize: 16 }}>{meter.title}</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <SheetPhotos title={previousLabel} urls={meter.previousUrls} />
+            <SheetPhotos title={monthLabel} urls={meter.currentUrls} />
           </div>
-        ))}
+          <p style={{ margin: "6px 0 0", fontSize: 12 }}>
+            {meter.previousReading == null
+              ? `Sin lectura de ${previousLabel}.`
+              : `Lectura anterior: ${kwhText(meter.previousReading)} kWh${meter.previousAt ? ` · ${formatReadingStamp(meter.previousAt)}` : ""}`}
+          </p>
+          <p style={{ margin: "2px 0 0", fontSize: 12 }}>
+            {meter.currentReading == null
+              ? "Sin lectura de este mes."
+              : `Lectura de este mes: ${kwhText(meter.currentReading)} kWh${meter.currentAt ? ` · ${formatReadingStamp(meter.currentAt)}` : ""}`}
+          </p>
+          <p style={{ margin: "4px 0 0", fontSize: 14, fontWeight: 700 }}>
+            {meter.fromReadings && meter.consumed < 0
+              ? "La lectura de este mes es menor que la anterior."
+              : meter.fromReadings
+                ? `Consumió ${kwhText(meter.consumed)} kWh entre las dos mediciones.`
+                : `kWh de este período: ${kwhText(meter.consumed)}.`}
+          </p>
+        </section>
+      ))}
+
+      <section style={{ marginTop: 14 }}>
+        <h3 style={{ margin: "0 0 6px", fontSize: 16 }}>Portada de la factura</h3>
+        {facturaUrls.length ? (
+          facturaUrls.map((url) => (
+            <img key={url} src={url} alt="Portada de la factura" style={{ display: "block", width: "100%", maxHeight: "125mm", objectFit: "contain", background: "#f4f4f5", border: "1px solid #d4d4d8", borderRadius: 8, marginBottom: 8 }} />
+          ))
+        ) : (
+          <p style={{ margin: 0, fontSize: 12, color: "#71717a" }}>Sin foto de la factura.</p>
+        )}
       </section>
 
       <section style={{ breakBefore: hasPhoto ? "page" : "auto" }}>
@@ -426,18 +712,17 @@ function EdesurSheet({
               <strong>{kwhText(numbers.totalKwh)}</strong>
             </p>
             <p style={{ margin: "8px 0", fontSize: 13, lineHeight: 1.4 }}>
-              El kWh de este mes sale {priceText(split.rate)}. Es el total de la factura dividido por los kWh totales:{" "}
-              {formatMoney(numbers.totalBill, "ARS")} ÷ {kwhText(numbers.totalKwh)} kWh.
+              El kWh de este mes sale {priceText(split.rate)}. Es el total de la factura dividido por los kWh totales: {formatMoney(numbers.totalBill, "ARS")} ÷ {kwhText(numbers.totalKwh)} kWh.
             </p>
-            <MeterRow title="Medidor 1 de mi hermano" kwhValue={numbers.brotherKwh} rate={split.rate} amount={split.brother1} />
-            <MeterRow title="Medidor 2 de mi hermano" kwhValue={numbers.brother2Kwh} rate={split.rate} amount={split.brother2} />
+            <MeterRow title="Medidor LEO casa" kwhValue={numbers.brotherKwh} rate={split.rate} amount={split.brother1} />
+            <MeterRow title="Medidor LEO's Garage" kwhValue={numbers.brother2Kwh} rate={split.rate} amount={split.brother2} />
             <p style={{ margin: "8px 0", padding: "8px 10px", background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8, display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <strong>Total de mi hermano</strong>
+              <strong>Total de LEO</strong>
               <strong>{formatMoney(split.brother, "ARS")}</strong>
             </p>
-            <MeterRow title="Mi medidor" kwhValue={numbers.mineKwh} rate={split.rate} amount={split.mine} />
+            <MeterRow title="Medidor Seba" kwhValue={numbers.mineKwh} rate={split.rate} amount={split.mine} />
             <p style={{ margin: "8px 0 0", padding: "8px 10px", background: "#f0fdfa", border: "1px solid #99f6e4", borderRadius: 8, display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <strong>Lo que pago yo</strong>
+              <strong>Lo que paga Seba</strong>
               <strong>{formatMoney(split.mine, "ARS")}</strong>
             </p>
             {split.otherKwh > 0.000001 ? (
@@ -452,6 +737,21 @@ function EdesurSheet({
       </section>
       <p style={{ marginTop: 16, fontSize: 9, color: "#71717a" }}>SS Cuentas {APP_VERSION}</p>
     </article>
+  );
+}
+
+function SheetPhotos({ title, urls }: { title: string; urls: string[] }) {
+  return (
+    <div>
+      <p style={{ margin: "0 0 4px", fontSize: 11, textTransform: "capitalize" }}>{title}</p>
+      {urls.length ? (
+        urls.map((url) => (
+          <img key={url} src={url} alt={title} style={{ display: "block", width: "100%", maxHeight: "70mm", objectFit: "contain", background: "#f4f4f5", border: "1px solid #d4d4d8", borderRadius: 8, marginBottom: 6 }} />
+        ))
+      ) : (
+        <p style={{ margin: 0, fontSize: 11, color: "#71717a" }}>Sin foto.</p>
+      )}
+    </div>
   );
 }
 

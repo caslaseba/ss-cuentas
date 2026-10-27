@@ -22,10 +22,17 @@ export type EdesurMonth = {
   totalKwh: number;
   totalBill: number;
   mineKwh: number;
-  /** Medidor 1 de tu hermano. */
+  /** Medidor LEO casa. */
   brotherKwh: number;
-  /** Medidor 2 de tu hermano. */
+  /** Medidor LEO's Garage. */
   brother2Kwh: number;
+  /** Número que marcaba el medidor, no el consumo del período. */
+  brotherReading: number | null;
+  brotherReadAt: string | null;
+  brother2Reading: number | null;
+  brother2ReadAt: string | null;
+  mineReading: number | null;
+  mineReadAt: string | null;
 };
 
 export type EdesurPhotoLabel = "mio" | "hermano" | "hermano2" | "factura";
@@ -40,10 +47,60 @@ export type EdesurPhoto = {
 };
 
 export function edesurPhotoLabel(label: EdesurPhotoLabel) {
-  if (label === "mio") return "Mi medidor";
-  if (label === "hermano") return "Medidor 1 de mi hermano";
-  if (label === "hermano2") return "Medidor 2 de mi hermano";
+  if (label === "mio") return "Medidor Seba";
+  if (label === "hermano") return "Medidor LEO casa";
+  if (label === "hermano2") return "Medidor LEO's Garage";
   return "Portada de la factura";
+}
+
+const BUENOS_AIRES = "America/Buenos_Aires";
+
+/** Valor para un input datetime-local, en hora de Buenos Aires. */
+export function readingInputValue(iso: string | null | undefined) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUENOS_AIRES,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  const hour = pick("hour");
+  return `${pick("year")}-${pick("month")}-${pick("day")}T${hour === "24" ? "00" : hour}:${pick("minute")}`;
+}
+
+/** El input es hora de Buenos Aires. */
+export function readingIsoFromInput(value: string) {
+  if (!value) return null;
+  const date = new Date(`${value.length === 16 ? `${value}:00` : value}-03:00`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+export function formatReadingStamp(iso: string | null | undefined) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("es-AR", {
+    timeZone: BUENOS_AIRES,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+}
+
+/** Lo que consumió el medidor entre la lectura anterior y la de este mes. */
+export function meterConsumption(previous: number | null | undefined, current: number | null | undefined) {
+  if (previous == null || current == null) return null;
+  if (!Number.isFinite(previous) || !Number.isFinite(current)) return null;
+  return Math.round((current - previous) * 100) / 100;
 }
 
 export function withEdesurMonth(list: EdesurMonth[], next: EdesurMonth) {

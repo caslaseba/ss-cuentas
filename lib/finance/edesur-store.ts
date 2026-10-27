@@ -3,6 +3,18 @@ import type { EdesurMonth } from "@/lib/finance/edesur";
 
 const KIND = "ss-cuentas-edesur-months";
 
+function readingOf(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function stampOf(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 type QueueRow = { id: string; payload: { kind?: string; months?: unknown } | null };
 
 function asMonths(value: unknown): EdesurMonth[] {
@@ -17,15 +29,27 @@ function asMonths(value: unknown): EdesurMonth[] {
     const brotherKwh = Number(row.brotherKwh);
     const brother2Kwh = Number(row.brother2Kwh ?? 0);
     if (![totalKwh, totalBill, mineKwh, brotherKwh, brother2Kwh].every((n) => Number.isFinite(n) && n >= 0)) return [];
-    if (!(totalKwh > 0)) return [];
-    return [{ month: row.month, totalKwh, totalBill, mineKwh, brotherKwh, brother2Kwh }];
+    return [{
+      month: row.month,
+      totalKwh,
+      totalBill,
+      mineKwh,
+      brotherKwh,
+      brother2Kwh,
+      brotherReading: readingOf(row.brotherReading),
+      brotherReadAt: stampOf(row.brotherReadAt),
+      brother2Reading: readingOf(row.brother2Reading),
+      brother2ReadAt: stampOf(row.brother2ReadAt),
+      mineReading: readingOf(row.mineReading),
+      mineReadAt: stampOf(row.mineReadAt),
+    }];
   });
 }
 
 async function readTable(supabase: SupabaseClient): Promise<EdesurMonth[] | null> {
   const { data, error } = await supabase
     .from("edesur_months")
-    .select("month_key, total_kwh, total_bill, mine_kwh, brother_kwh, brother_kwh_2");
+    .select("month_key, total_kwh, total_bill, mine_kwh, brother_kwh, brother_kwh_2, brother_reading, brother_read_at, brother2_reading, brother2_read_at, mine_reading, mine_read_at");
   if (error) return null;
   return asMonths(
     (data ?? []).map((row) => ({
@@ -35,6 +59,12 @@ async function readTable(supabase: SupabaseClient): Promise<EdesurMonth[] | null
       mineKwh: row.mine_kwh,
       brotherKwh: row.brother_kwh,
       brother2Kwh: row.brother_kwh_2,
+      brotherReading: row.brother_reading,
+      brotherReadAt: row.brother_read_at,
+      brother2Reading: row.brother2_reading,
+      brother2ReadAt: row.brother2_read_at,
+      mineReading: row.mine_reading,
+      mineReadAt: row.mine_read_at,
     })),
   );
 }
@@ -80,6 +110,12 @@ async function writeTable(supabase: SupabaseClient, userId: string, months: Edes
         mine_kwh: item.mineKwh,
         brother_kwh: item.brotherKwh,
         brother_kwh_2: item.brother2Kwh,
+        brother_reading: item.brotherReading,
+        brother_read_at: item.brotherReadAt,
+        brother2_reading: item.brother2Reading,
+        brother2_read_at: item.brother2ReadAt,
+        mine_reading: item.mineReading,
+        mine_read_at: item.mineReadAt,
       },
       { onConflict: "user_id,month_key" },
     );

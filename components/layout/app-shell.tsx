@@ -16,6 +16,7 @@ import { useEdition } from "@/components/providers/edition-provider";
 import { CalculatorWidget } from "@/components/tools/calculator";
 import { NotesWidget } from "@/components/tools/notes-widget";
 import { SearchWidget } from "@/components/tools/search-widget";
+import { UpdateNotice } from "@/components/layout/update-notice";
 import { APP_VERSION } from "@/lib/version";
 import { cn } from "@/lib/utils";
 
@@ -94,6 +95,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
 
       <main className="zoom-content pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
         <div className="mx-auto w-full min-w-0 max-w-lg px-3 py-4 sm:px-4 sm:py-6 md:max-w-2xl xl:max-w-5xl">
+          <UpdateNotice />
           {!online && (
             <div className="no-print mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
               Estás offline. Lo que cargues se sube cuando vuelvas a tener internet.

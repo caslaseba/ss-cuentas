@@ -41,7 +41,7 @@ export default function MasPage() {
           <Link href="/edesur">Informe EDESUR</Link>
         </Button>
         <p className="text-sm text-muted-foreground">
-          Fotos de los medidores, la portada de la factura y cuánto paga cada uno.
+          Medidor LEO casa, Medidor LEO's Garage, Medidor Seba, la factura y cuánto paga cada uno.
         </p>
       </div>
 
