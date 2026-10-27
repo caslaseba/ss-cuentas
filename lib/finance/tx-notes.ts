@@ -76,3 +76,20 @@ export function isCardBillPayment(notes: string | null | undefined, month?: stri
   if (!found) return false;
   return month ? found === month : true;
 }
+
+export function unpaidCarryNote(month: string) {
+  return `impaga:${month}`;
+}
+
+export function unpaidCarryMonthOf(notes: string | null | undefined) {
+  const line = notesLines(notes).find((item) => item.startsWith("impaga:"));
+  if (!line) return null;
+  const month = line.slice("impaga:".length);
+  return /^\d{4}-\d{2}$/.test(month) ? month : null;
+}
+
+export function isUnpaidCarryPayment(notes: string | null | undefined, month?: string) {
+  const found = unpaidCarryMonthOf(notes);
+  if (!found) return false;
+  return month ? found === month : true;
+}

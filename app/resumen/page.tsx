@@ -20,14 +20,15 @@ import { Select } from "@/components/ui/select";
 import { useDropInstallment } from "@/hooks/use-drop-installment";
 import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
-import { parseCloseOn, shortMonth } from "@/lib/finance/close-cycle";
+import { shortMonth } from "@/lib/finance/close-cycle";
 import { planIdFromProjectedCuota } from "@/lib/finance/installment-drop";
 import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
 import { isEdesurName } from "@/lib/finance/edesur";
 import { monthIncomeLines, monthIncomeSplit } from "@/lib/finance/month-brief";
 import { BOOKS_START_ISO, cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
-import { cardBillNotes, isCardBillPayment } from "@/lib/finance/tx-notes";
+import { cardBillNotes, isCardBillPayment, isUnpaidCarryPayment, unpaidCarryNote } from "@/lib/finance/tx-notes";
+import type { UnpaidPart } from "@/lib/finance/unpaid-carry";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
 import { cn, formatMoney, isoDate, monthKey } from "@/lib/utils";
 import type { CreditCard, PaymentMethod, RecurringPayment, Transaction } from "@/lib/types";
@@ -68,14 +69,6 @@ function ResumenInner() {
     papa,
     toArs,
     monthMoves,
-    closeOn,
-    prevClose,
-    periodStart,
-    periodEnd,
-    laterStart,
-    laterEnd,
-    cardHitsNext,
-    cardHitsLater,
     cardDue,
     cardBillTx,
     salaryCardTx,
@@ -88,9 +81,8 @@ function ResumenInner() {
     tarjetaAbierta,
     canGoPrev,
     salaryMonthFor,
-    saveMonthClose,
-    cycleCard,
     salarySamples,
+    unpaidCarry,
   } = view;
   const { unlocked, askPin, pinError, guard, submitPin, closePin } = useEditGate();
   const dropInstallment = useDropInstallment();
@@ -106,6 +98,7 @@ function ResumenInner() {
   const [editingFixed, setEditingFixed] = useState<RecurringPayment | null>(null);
   const [payAsk, setPayAsk] = useState<RecurringPayment | null>(null);
   const [cardPayAsk, setCardPayAsk] = useState(false);
+  const [carryPayAsk, setCarryPayAsk] = useState(false);
   const [payDate, setPayDate] = useState(isoDate(new Date()));
   const [payMethod, setPayMethod] = useState<PaymentMethod>("transferencia");
   const [unpayAsk, setUnpayAsk] = useState<RecurringPayment | null>(null);
@@ -260,9 +253,6 @@ function ResumenInner() {
   const sueldoMes = estimated && income.sueldo <= 0 ? wallet.cobrado : income.sueldo;
   const ingresosMes = estimated ? 0 : income.ingresos;
   const masked = (amount: number) => (hideSueldo ? "••••••" : formatMoney(amount, "ARS"));
-  const laterName = format(shiftMonth(cursor, 2), "MMMM", { locale: es });
-  const periodOk = periodStart <= periodEnd;
-
   function dayLabel(iso: string) {
     const [year, month, day] = iso.split("-").map(Number);
     return format(new Date(year, (month || 1) - 1, day || 1), "dd/MM", { locale: es });
@@ -273,15 +263,16 @@ function ResumenInner() {
     return shortMonth(new Date(year, (month || 1) - 1, 1));
   }
 
-  function onCloseDate(month: Date, value: string) {
-    if (!cycleCard || !value) return;
-    const closingOn = parseCloseOn(value);
-    if (!closingOn) return;
-    guard(() => {
-      void saveMonthClose(cycleCard.id, monthKey(month), closingOn)
-        .then(() => toast.success("Cierre guardado"))
-        .catch((err) => toast.error(err instanceof Error ? err.message : "No se pudo guardar el cierre"));
-    }, isPast);
+  function carryMonthName(key: string) {
+    const [year, month] = key.split("-").map(Number);
+    return format(new Date(year, (month || 1) - 1, 1), "MMMM", { locale: es });
+  }
+
+  function carryPartLabel(part: UnpaidPart) {
+    const when = carryMonthName(part.month);
+    if (part.kind === "tarjeta") return `Tarjeta de ${when} sin cubrir`;
+    if (part.month !== unpaidCarry.sourceMonth) return `${part.name} · ${when}`;
+    return part.name;
   }
 
   function goMonth(delta: number) {
@@ -588,6 +579,47 @@ function ResumenInner() {
     }
   }
 
+  const carryPayments = transactions.filter(
+    (tx) =>
+      tx.type === "egreso" &&
+      tx.payment_method !== "tarjeta_credito" &&
+      tx.occurred_on.slice(0, 7) === viewedMonth &&
+      unpaidCarry.sourceMonth != null &&
+      isUnpaidCarryPayment(tx.notes, unpaidCarry.sourceMonth),
+  );
+
+  async function confirmCarryPay() {
+    if (!unpaidCarry.sourceMonth || unpaidCarry.left <= 0) return;
+    const source = unpaidCarry.sourceMonth;
+    const amount = unpaidCarry.left;
+    setCarryPayAsk(false);
+    try {
+      await saveTransaction({
+        type: "egreso",
+        amount,
+        currency: "ARS",
+        concept: `Cuenta impaga de ${carryMonthName(source)}`,
+        payment_method: "transferencia",
+        occurred_on: dateInViewedMonth(payDate || isoDate(new Date())),
+        notes: unpaidCarryNote(source),
+        source: "manual",
+      });
+      toast.success("Cuenta impaga descontada de este sueldo.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo anotar el pago");
+    }
+  }
+
+  async function undoCarryPay() {
+    if (!carryPayments.length) return;
+    try {
+      for (const tx of carryPayments) await deleteTransaction(tx.id);
+      toast.success("El pago de la cuenta impaga volvió atrás");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo deshacer");
+    }
+  }
+
   async function bringLeftover() {
     if (!leftover || alreadyCarried || !canEdit) return;
     try {
@@ -663,6 +695,11 @@ function ResumenInner() {
               Sueldo, ingresos, las dos tarjetas y la transferencia, abajo.
             </p>
             {salaryNote ? <p className="mt-1 text-[10px] leading-snug text-muted-foreground">{salaryNote}</p> : null}
+            {unpaidCarry.left > 0 ? (
+              <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+                Incluye la cuenta impaga{unpaidCarry.sourceMonth ? ` de ${carryMonthName(unpaidCarry.sourceMonth)}` : ""}.
+              </p>
+            ) : null}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
             <Button
@@ -728,9 +765,7 @@ function ResumenInner() {
               Visa mía {formatMoney(visaMia, "ARS")} · Extensión {formatMoney(visaPapa, "ARS")}
             </p>
             <p className="text-[10px] leading-tight text-muted-foreground">
-              {tarjetaAbierta > 0
-                ? `Del ${dayLabel(prevClose)} al ${dayLabel(closeOn)}. Se abonan en ${nextName}.`
-                : "Sin consumo en las tarjetas."}
+              {tarjetaAbierta > 0 ? `Se abonan en ${nextName}.` : "Sin consumo en las tarjetas."}
             </p>
             {cardDue.total > 0 ? (
               <p className="mt-1 text-[11px] leading-tight">
@@ -741,9 +776,25 @@ function ResumenInner() {
                 <span className="block text-[10px] text-muted-foreground">
                   {cardPaid
                     ? "Ya descuenta el sueldo de este mes."
-                    : "Cuando la pagues, o elijas algunos gastos, descuenta el sueldo de este mes."}
+                    : "Si no la cubrís, lo que falte entra como cuenta impaga el mes que viene."}
                 </span>
               </p>
+            ) : null}
+            {unpaidCarry.left > 0 ? (
+              <div className="mt-1">
+                <p className="flex items-baseline justify-between gap-2 text-[11px]">
+                  <span>Cuenta impaga{unpaidCarry.sourceMonth ? ` de ${carryMonthName(unpaidCarry.sourceMonth)}` : ""}</span>
+                  <span className="font-semibold tabular-nums">{formatMoney(unpaidCarry.left, "ARS")}</span>
+                </p>
+                <ul className="text-[10px] leading-tight text-muted-foreground">
+                  {unpaidCarry.parts.map((part) => (
+                    <li key={`${part.kind}-${part.month}-${part.name}`} className="flex justify-between gap-2">
+                      <span className="min-w-0 truncate">{carryPartLabel(part)}</span>
+                      <span className="shrink-0 tabular-nums">{formatMoney(part.amount, "ARS")}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
             <p className="mt-1 flex items-baseline justify-between gap-2 text-[11px]">
               <span>Efectivo y transferencia</span>
@@ -773,6 +824,41 @@ function ResumenInner() {
         </p>
       ) : null}
 
+      {unpaidCarry.sourceMonth && (unpaidCarry.left > 0 || unpaidCarry.paid > 0) ? (
+        <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
+          <div className="min-w-0">
+            <p className="text-[11px] text-amber-950 dark:text-amber-100">
+              {unpaidCarry.left > 0
+                ? `Cuenta impaga de ${carryMonthName(unpaidCarry.sourceMonth)} ${formatMoney(unpaidCarry.left, "ARS")}`
+                : `La cuenta impaga de ${carryMonthName(unpaidCarry.sourceMonth)} ya está cubierta.`}
+            </p>
+            {unpaidCarry.paid > 0 && unpaidCarry.left > 0 ? (
+              <p className="text-[10px] text-amber-950/80 dark:text-amber-100/80">
+                Ya pagaste {formatMoney(unpaidCarry.paid, "ARS")}. Lo que falta sigue en este mes.
+              </p>
+            ) : null}
+          </div>
+          {unpaidCarry.left > 0 ? (
+            <Button
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() =>
+                guard(() => {
+                  setPayDate(isoDate(new Date()));
+                  setCarryPayAsk(true);
+                }, isPast)
+              }
+            >
+              Pagué
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => guard(() => void undoCarryPay(), isPast)}>
+              Deshacer
+            </Button>
+          )}
+        </div>
+      ) : null}
+
       {leftover > 0 && !alreadyCarried && !isFuture ? (
         <div className="flex items-center justify-between gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5">
           <p className="text-[11px] text-emerald-900 dark:text-emerald-200">
@@ -782,51 +868,6 @@ function ResumenInner() {
             Traer
           </Button>
         </div>
-      ) : null}
-
-      {cycleCard ? (
-        <section className="rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-2">
-          <div className="grid grid-cols-2 gap-2">
-            <label className="min-w-0 text-xs font-medium" htmlFor="cierre-anterior">
-              Cierre anterior
-              <input
-                id="cierre-anterior"
-                type="date"
-                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
-                value={prevClose}
-                onChange={(event) => onCloseDate(shiftMonth(cursor, -1), event.target.value)}
-              />
-            </label>
-            <label className="min-w-0 text-xs font-medium" htmlFor="cierre-tarjeta">
-              Este cierre
-              <input
-                id="cierre-tarjeta"
-                type="date"
-                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
-                value={closeOn}
-                onChange={(event) => onCloseDate(cursor, event.target.value)}
-              />
-            </label>
-          </div>
-          {periodOk ? (
-            <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-              Del {dayLabel(prevClose)} al {dayLabel(closeOn)} es el período de las tarjetas. Se abona en {nextName}.
-            </p>
-          ) : (
-            <p className="mt-1.5 text-[11px] leading-snug text-destructive">
-              El cierre anterior tiene que ser antes de este cierre.
-            </p>
-          )}
-          <p className="mt-1 text-sm font-semibold">
-            Descuenta en {nextName} {formatMoney(cardHitsNext, "ARS")}
-          </p>
-          {cardHitsLater > 0 ? (
-            <p className="text-[11px] text-muted-foreground">
-              Del {dayLabel(laterStart)} al {dayLabel(laterEnd)} descuenta en {laterName}{" "}
-              {formatMoney(cardHitsLater, "ARS")}.
-            </p>
-          ) : null}
-        </section>
       ) : null}
 
       <div className="flex gap-1 overflow-x-auto pb-1">
@@ -920,11 +961,6 @@ function ResumenInner() {
           {picking ? (
             <p className="text-[10px] text-muted-foreground">
               Tocá uno o varios. Si son de tarjeta, los descontás juntos de este sueldo.
-            </p>
-          ) : null}
-          {listOrder === "fecha" && source !== "plata" && source !== "ingresos" ? (
-            <p className="text-[10px] text-muted-foreground">
-              Tarjetas del {dayLabel(prevClose)} al {dayLabel(closeOn)}, el cierre anterior inclusive.
             </p>
           ) : null}
           {listOrder === "fecha" ? (
@@ -1179,6 +1215,31 @@ function ResumenInner() {
         </div>
       ) : null}
 
+      <Dialog open={carryPayAsk} onOpenChange={setCarryPayAsk}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>¿Pagaste la cuenta impaga?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {unpaidCarry.sourceMonth
+              ? `Se descuentan ${formatMoney(unpaidCarry.left, "ARS")} del sueldo de este mes. Es lo que no se cubrió en ${carryMonthName(unpaidCarry.sourceMonth)}.`
+              : null}
+          </p>
+          <div className="mt-3">
+            <Label>Fecha del pago</Label>
+            <Input className="mt-1.5" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+          </div>
+          <div className="mt-4 flex gap-2">
+            <Button className="flex-1" onClick={() => void confirmCarryPay()}>
+              Sí, pagué
+            </Button>
+            <Button className="flex-1" variant="outline" onClick={() => setCarryPayAsk(false)}>
+              Cancelar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={cardPayAsk} onOpenChange={setCardPayAsk}>
         <DialogContent>
           <DialogHeader>
@@ -1270,6 +1331,7 @@ function ResumenInner() {
       cardCharges={salaryCardTx.filter((tx) => tx.type === "egreso")}
       cardPaidAmount={reportCardPaid}
       cardUnpaid={cardDue.total}
+      unpaidCarry={unpaidCarry}
       outflows={reportOutflows}
       categories={categories}
       cards={cards}

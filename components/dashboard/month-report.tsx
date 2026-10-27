@@ -7,6 +7,7 @@ import { observationOf } from "@/lib/finance/tx-notes";
 import { cleanConceptName } from "@/lib/finance/recurring";
 import { paymentMethodLabel } from "@/lib/finance/match";
 import { isProjectedTx } from "@/lib/finance/month-view";
+import type { UnpaidCarry } from "@/lib/finance/unpaid-carry";
 import { groupCategory } from "@/lib/finance/style";
 import { formatMoney } from "@/lib/utils";
 import type { Category, CreditCard, Transaction } from "@/lib/types";
@@ -33,6 +34,13 @@ function pesos(amount: number) {
   return formatMoney(amount, "ARS");
 }
 
+function carryPartLabel(part: { kind: "tarjeta" | "servicio"; month: string; name: string }) {
+  const [year, month] = part.month.split("-").map(Number);
+  const when = format(new Date(year, (month || 1) - 1, 1), "MMMM yyyy", { locale: es });
+  if (part.kind === "tarjeta") return `Tarjeta de ${when} sin cubrir`;
+  return `${part.name} · ${when}`;
+}
+
 type Group = { name: string; total: number; txs: Transaction[] };
 
 export function MonthReport({
@@ -48,6 +56,7 @@ export function MonthReport({
   cardCharges,
   cardPaidAmount,
   cardUnpaid,
+  unpaidCarry,
   outflows,
   categories,
   cards,
@@ -66,6 +75,7 @@ export function MonthReport({
   cardCharges: Transaction[];
   cardPaidAmount: number;
   cardUnpaid: number;
+  unpaidCarry: UnpaidCarry;
   outflows: Transaction[];
   categories: Category[];
   cards: CreditCard[];
@@ -101,7 +111,8 @@ export function MonthReport({
   const cardGroups = groupsOf(cardCharges);
   const outGroups = groupsOf(outflows);
   const salidas = outflows.reduce((sum, tx) => sum + ars(tx), 0);
-  const queda = entra - tarjeta - salidas;
+  const impaga = unpaidCarry.left;
+  const queda = entra - tarjeta - salidas - impaga;
   const incomes = [...incomeLines].sort((a, b) => a.on.localeCompare(b.on) || a.concept.localeCompare(b.concept, "es"));
 
   return (
@@ -183,6 +194,22 @@ export function MonthReport({
       )}
       <Sum label="Total de salidas" value={pesos(salidas)} />
 
+      {impaga > 0 ? (
+        <section style={{ marginTop: 14 }}>
+          <h2 style={{ fontSize: 14, margin: "0 0 4px", color: "#b45309" }}>Cuenta impaga</h2>
+          <p style={{ margin: "0 0 8px", fontSize: 11, color: "#3f3f46" }}>
+            Lo que no se cubrió el mes anterior entra en este sueldo.
+          </p>
+          {unpaidCarry.parts.map((part) => (
+            <p key={`${part.kind}-${part.month}-${part.name}`} style={{ margin: "0 0 3px", fontSize: 11, display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <span>{carryPartLabel(part)}</span>
+              <strong>{pesos(part.amount)}</strong>
+            </p>
+          ))}
+          <Sum label="Suma la cuenta impaga" value={pesos(impaga)} />
+        </section>
+      ) : null}
+
       <section style={{ marginTop: 14, border: "2px solid #0f766e", borderRadius: 8, padding: 10 }}>
         <h2 style={{ margin: 0, fontSize: 14 }}>{estimated ? "Te quedaría" : "Te queda"}</h2>
         <p style={{ margin: "8px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
@@ -197,6 +224,12 @@ export function MonthReport({
           <span>Salidas de este mes</span>
           <span>− {pesos(salidas)}</span>
         </p>
+        {impaga > 0 ? (
+          <p style={{ margin: "2px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
+            <span>Cuenta impaga</span>
+            <span>− {pesos(impaga)}</span>
+          </p>
+        ) : null}
         <p style={{ margin: "8px 0 0", fontSize: 18, display: "flex", justifyContent: "space-between", color: "#047857" }}>
           <strong>{estimated ? "Te quedaría" : "Te queda"}</strong>
           <strong>{pesos(queda)}</strong>

@@ -8,9 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatMoney } from "@/lib/utils";
+import { formatMoney, monthKey } from "@/lib/utils";
 import { DAD_CARD_NAME, MY_CARD_NAME, householdCards } from "@/lib/finance/cards";
+import { closeOnForMonth, parseCloseOn } from "@/lib/finance/close-cycle";
 import { closeMessage, dueMessage, summarizeCard } from "@/lib/finance/settlement";
+import { shiftMonth } from "@/lib/finance/wallet";
 
 export function CardManager() {
   const { cards, transactions, installments, profile, saveCard, updateCard } = useFinance();
@@ -61,6 +63,8 @@ export function CardManager() {
             }
           }}
         />
+
+        <MonthCloseDates cardId={mine.id} closingDay={mine.closing_day} />
 
         <div className="rounded-xl border border-border p-3">
           <p className="text-sm font-medium">{DAD_CARD_NAME}</p>
@@ -126,6 +130,44 @@ function CardCycleForm({
         Guardar cierre y vencimiento
       </Button>
     </form>
+  );
+}
+
+function MonthCloseDates({ cardId, closingDay }: { cardId: string; closingDay: number }) {
+  const { monthCloses, saveMonthClose } = useFinance();
+  const today = new Date();
+  const current = new Date(today.getFullYear(), today.getMonth(), 1);
+  const previous = shiftMonth(current, -1);
+  const rows = [
+    { month: previous, label: "Cierre del mes pasado" },
+    { month: current, label: "Cierre de este mes" },
+  ];
+
+  return (
+    <div className="space-y-2 rounded-xl border border-border p-3">
+      <p className="text-sm font-medium">Fechas de cierre</p>
+      <p className="text-xs text-muted-foreground">Están acá, no en el resumen. El día de arriba es el habitual.</p>
+      {rows.map((row) => {
+        const value = closeOnForMonth(row.month, closingDay, monthCloses, cardId);
+        return (
+          <label key={monthKey(row.month)} className="block text-xs font-medium">
+            {row.label}
+            <input
+              type="date"
+              className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+              value={value}
+              onChange={(event) => {
+                const closingOn = parseCloseOn(event.target.value);
+                if (!closingOn) return;
+                void saveMonthClose(cardId, monthKey(row.month), closingOn)
+                  .then(() => toast.success("Cierre guardado"))
+                  .catch((err) => toast.error(err instanceof Error ? err.message : "No se pudo guardar el cierre"));
+              }}
+            />
+          </label>
+        );
+      })}
+    </div>
   );
 }
 
