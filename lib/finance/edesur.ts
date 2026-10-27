@@ -25,6 +25,21 @@ export type EdesurMonth = {
   brotherKwh: number;
 };
 
+export type EdesurPhotoLabel = "mio" | "hermano";
+
+/** Foto del medidor archivada en un mes. No incluye la imagen, solo dónde está. */
+export type EdesurPhoto = {
+  id: string;
+  month: string;
+  label: EdesurPhotoLabel;
+  path: string;
+  createdAt: string;
+};
+
+export function edesurPhotoLabel(label: EdesurPhotoLabel) {
+  return label === "mio" ? "Mío" : "De mi hermano";
+}
+
 export function withEdesurMonth(list: EdesurMonth[], next: EdesurMonth) {
   return [...list.filter((item) => item.month !== next.month), next].sort((a, b) => a.month.localeCompare(b.month));
 }

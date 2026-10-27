@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { EdesurMeterPhotos } from "@/components/dashboard/edesur-photos";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,7 @@ function kwhText(value: number) {
 export function EdesurSplitDialog({
   open,
   onOpenChange,
+  month,
   monthLabel,
   billAmount,
   received,
@@ -26,6 +28,7 @@ export function EdesurSplitDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  month: string;
   monthLabel: string;
   billAmount: number;
   received: number;
@@ -89,6 +92,9 @@ export function EdesurSplitDialog({
           El total de la factura se divide por los kWh totales. Cada uno paga ese precio por lo que consumió. Queda
           guardado en {monthLabel}.
         </p>
+        <div className="mt-3 rounded-md border border-border px-2 py-2">
+          <EdesurMeterPhotos month={month} monthLabel={monthLabel} />
+        </div>
         <div className="mt-3 space-y-2">
           <div>
             <Label htmlFor="edesur-kwh">kWh totales de la factura</Label>

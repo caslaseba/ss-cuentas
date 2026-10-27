@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { PinGate } from "@/components/entry/pin-gate";
 import { TransactionEdit } from "@/components/entry/transaction-edit";
 import { RecurringEdit } from "@/components/entry/recurring-edit";
+import { EdesurMeterPhotos } from "@/components/dashboard/edesur-photos";
 import { EdesurSplitDialog } from "@/components/dashboard/edesur-split";
 import { MovementRow } from "@/components/dashboard/movement-row";
 import { Button } from "@/components/ui/button";
@@ -772,6 +773,10 @@ function ResumenInner() {
         </section>
       ) : null}
 
+      <section className="rounded-md border border-border px-2 py-2">
+        <EdesurMeterPhotos month={viewedMonth} monthLabel={monthName} />
+      </section>
+
       {isPast && !unlocked ? (
         <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
           <p className="text-[11px] font-medium text-amber-950 dark:text-amber-100">
@@ -1154,6 +1159,7 @@ function ResumenInner() {
       <EdesurSplitDialog
         open={Boolean(edesurAsk)}
         onOpenChange={(open) => !open && setEdesurAsk(null)}
+        month={viewedMonth}
         monthLabel={monthName}
         billAmount={
           edesurAsk

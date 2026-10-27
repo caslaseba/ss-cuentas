@@ -28,9 +28,11 @@ import {
   withRecurringVia,
 } from "@/lib/finance/recurring";
 import type { CardMonthClose } from "@/lib/finance/close-cycle";
-import type { EdesurMonth } from "@/lib/finance/edesur";
+import type { EdesurMonth, EdesurPhoto, EdesurPhotoLabel } from "@/lib/finance/edesur";
 import { withEdesurMonth } from "@/lib/finance/edesur";
+import { EDESUR_METER_BUCKET, loadEdesurPhotos } from "@/lib/finance/edesur-photos";
 import { loadEdesurMonths, persistEdesurMonths } from "@/lib/finance/edesur-store";
+import { compressMeterPhoto } from "@/lib/finance/meter-photo";
 import { loadMonthCloses, persistMonthCloses, withMonthClose } from "@/lib/finance/month-closes";
 import { withTimeout } from "@/lib/async";
 import { isoDate, monthKey } from "@/lib/utils";
@@ -126,6 +128,9 @@ type FinanceContextValue = {
   saveMonthClose: (cardId: string, month: string, closingOn: string) => Promise<void>;
   edesurMonths: EdesurMonth[];
   saveEdesurMonth: (input: EdesurMonth) => Promise<void>;
+  edesurPhotos: EdesurPhoto[];
+  addEdesurPhoto: (month: string, label: EdesurPhotoLabel, file: File) => Promise<void>;
+  removeEdesurPhoto: (id: string) => Promise<void>;
 };
 
 type BootstrapBody = {
@@ -165,6 +170,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [recurring, setRecurring] = useState<RecurringPayment[]>([]);
   const [monthCloses, setMonthCloses] = useState<CardMonthClose[]>([]);
   const [edesurMonths, setEdesurMonths] = useState<EdesurMonth[]>([]);
+  const [edesurPhotos, setEdesurPhotos] = useState<EdesurPhoto[]>([]);
 
   const applySnap = useCallback((snap: FinanceSnapshot) => {
     booksRef.current = snap;
@@ -177,6 +183,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     setRecurring(snap.recurring);
     setMonthCloses(snap.monthCloses ?? []);
     setEdesurMonths(snap.edesurMonths ?? []);
+    setEdesurPhotos(snap.edesurPhotos ?? []);
     writeFinanceSnapshot(snap);
   }, []);
 
@@ -333,6 +340,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         setRecurring(cachedNow.recurring);
         setMonthCloses(cachedNow.monthCloses ?? []);
         setEdesurMonths(cachedNow.edesurMonths ?? []);
+        setEdesurPhotos(cachedNow.edesurPhotos ?? []);
         setLoading(false);
       }
 
@@ -372,6 +380,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       setTransactions(merged.transactions);
       let closes = cachedNow?.monthCloses ?? [];
       let savedEdesur = cachedNow?.edesurMonths ?? [];
+      let savedPhotos = cachedNow?.edesurPhotos ?? [];
       try {
         closes = await loadMonthCloses(supabase, body.userId);
       } catch {
@@ -382,11 +391,18 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       } catch {
         savedEdesur = cachedNow?.edesurMonths ?? [];
       }
-      const stored = { ...merged, monthCloses: closes, edesurMonths: savedEdesur };
+      try {
+        const loadedPhotos = await loadEdesurPhotos(supabase);
+        if (loadedPhotos) savedPhotos = loadedPhotos;
+      } catch {
+        savedPhotos = cachedNow?.edesurPhotos ?? [];
+      }
+      const stored = { ...merged, monthCloses: closes, edesurMonths: savedEdesur, edesurPhotos: savedPhotos };
       setInstallments(stored.installments);
       setRecurring(stored.recurring);
       setMonthCloses(closes);
       setEdesurMonths(savedEdesur);
+      setEdesurPhotos(savedPhotos);
       booksRef.current = stored;
       setPendingSync(pending.length);
       writeFinanceSnapshot(stored);
@@ -1392,6 +1408,57 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     await persistEdesurMonths(supabase, user.id, next);
   };
 
+  function rememberPhotos(next: EdesurPhoto[]) {
+    setEdesurPhotos(next);
+    const base = booksRef.current ?? readFinanceSnapshot();
+    if (!base) return;
+    const stored = { ...base, edesurPhotos: next };
+    booksRef.current = stored;
+    writeFinanceSnapshot(stored);
+  }
+
+  const addEdesurPhoto: FinanceContextValue["addEdesurPhoto"] = async (month, label, file) => {
+    if (!supabase) throw new Error("Sin conexión para guardar la foto");
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new Error("Mes inválido");
+    const user = await currentUser();
+    if (!user) throw new Error("Sin sesión");
+    const blob = await compressMeterPhoto(file);
+    const id = crypto.randomUUID();
+    const path = `${user.id}/${month}/${id}.jpg`;
+    const uploaded = await supabase.storage.from(EDESUR_METER_BUCKET).upload(path, blob, {
+      contentType: "image/jpeg",
+      upsert: false,
+    });
+    if (uploaded.error) throw new Error(uploaded.error.message);
+    const inserted = await supabase
+      .from("edesur_meter_photos")
+      .insert({ id, user_id: user.id, month_key: month, storage_path: path, label })
+      .select("id, created_at")
+      .single();
+    if (inserted.error) {
+      await supabase.storage.from(EDESUR_METER_BUCKET).remove([path]);
+      throw new Error(inserted.error.message);
+    }
+    const photo: EdesurPhoto = {
+      id,
+      month,
+      label,
+      path,
+      createdAt: String(inserted.data?.created_at ?? new Date().toISOString()),
+    };
+    rememberPhotos([...edesurPhotos, photo].sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
+  };
+
+  const removeEdesurPhoto: FinanceContextValue["removeEdesurPhoto"] = async (id) => {
+    const photo = edesurPhotos.find((item) => item.id === id);
+    if (!photo) return;
+    if (!supabase) throw new Error("Sin conexión para quitar la foto");
+    const removed = await supabase.from("edesur_meter_photos").delete().eq("id", id);
+    if (removed.error) throw new Error(removed.error.message);
+    await supabase.storage.from(EDESUR_METER_BUCKET).remove([photo.path]);
+    rememberPhotos(edesurPhotos.filter((item) => item.id !== id));
+  };
+
   const primaryAccount = findIcbcAccount(accounts) ?? accounts[0] ?? null;
   const mpAccount = findMpAccount(accounts);
   const icbcAccount = findIcbcAccount(accounts);
@@ -1441,6 +1508,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         saveMonthClose,
         edesurMonths,
         saveEdesurMonth,
+        edesurPhotos,
+        addEdesurPhoto,
+        removeEdesurPhoto,
       }}
     >
       {children}
