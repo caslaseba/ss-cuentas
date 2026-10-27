@@ -48,7 +48,7 @@ export function useMonthView(initial?: Date) {
       return next;
     });
   };
-  const { transactions: allTransactions, cards, profile, installments, recurring } = finance;
+  const { transactions: allTransactions, cards, profile, installments, recurring, categories } = finance;
   const transactions = allTransactions.filter((tx) => tx.occurred_on >= BOOKS_START_ISO);
   const { mine, papa, visible } = householdCards(cards, transactions);
   const visibleIds = new Set(visible.map((c) => c.id));
@@ -222,7 +222,8 @@ export function useMonthView(initial?: Date) {
       { visa: 0, extension: 0, total: 0 },
     );
 
-  const typicalSalary = typicalMonthlySalary(transactions, toArs, now);
+  const salaryEstimate = typicalMonthlySalary(transactions, categories, toArs, now);
+  const typicalSalary = salaryEstimate.amount;
   const extraFijos = (isFuture ? projectedFijos : []).reduce((sum, t) => sum + toArs(Number(t.amount), t.currency), 0);
   const cobrado = isFuture && wallet.cobrado <= 0 ? typicalSalary : wallet.cobrado;
   const gastadoContado = wallet.gastadoContado + extraFijos;
@@ -275,6 +276,7 @@ export function useMonthView(initial?: Date) {
     cardHitsLater,
     salaryMonthFor: (iso: string) => salaryMonthOf(iso, closeOf),
     typicalSalary,
+    salarySamples: salaryEstimate.samples,
     quedaSiPagaVisa,
     estimated,
   };

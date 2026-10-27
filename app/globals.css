@@ -99,3 +99,39 @@ body {
     padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
   }
 }
+
+@media print {
+  @page {
+    margin: 12mm;
+    size: A4;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  header,
+  nav,
+  .no-print,
+  [data-sonner-toaster],
+  [role="dialog"],
+  [data-radix-portal] {
+    display: none !important;
+  }
+  main,
+  main > div {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+  #month-report,
+  #month-report * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #month-report {
+    display: block !important;
+    width: 100% !important;
+    color: #111 !important;
+    background: #fff !important;
+  }
+}

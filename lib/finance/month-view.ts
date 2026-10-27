@@ -1,3 +1,4 @@
+import { isSalaryTx } from "@/lib/finance/month-brief";
 import { isCashMethod } from "@/lib/finance/match";
 import { amountForMonth, chargeMatchesRecurring, isCardRecurring, recurringApplies, recurringVia } from "@/lib/finance/recurring";
 import type { BillingCycle } from "@/lib/finance/settlement";
@@ -143,18 +144,30 @@ export function cardRefForMonth(cursor: Date, now: Date) {
   return new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0, 12, 0, 0);
 }
 
+export type SalarySample = { month: string; amount: number };
+
+/**
+ * Promedio del sueldo cobrado. Mira hasta 6 meses hacia atrás desde hoy
+ * y usa como máximo 3 meses en los que hubo sueldo. No suma otros ingresos.
+ */
 export function typicalMonthlySalary(
   transactions: Transaction[],
+  categories: Pick<Category, "id" | "name">[],
   toArs: (amount: number, currency: Transaction["currency"]) => number,
   ref = new Date(),
 ) {
-  const amounts: number[] = [];
-  for (let i = 0; i < 6 && amounts.length < 3; i++) {
-    const cobrado = monthWallet(transactions, toArs, shiftMonth(ref, -i)).cobrado;
-    if (cobrado > 0) amounts.push(cobrado);
+  const samples: SalarySample[] = [];
+  for (let i = 0; i < 6 && samples.length < 3; i++) {
+    const month = shiftMonth(ref, -i);
+    const amount = transactions.reduce((sum, tx) => {
+      if (!isSalaryTx(tx, categories) || !inCurrentMonth(tx.occurred_on, month)) return sum;
+      const value = toArs(Number(tx.amount), tx.currency);
+      return Number.isFinite(value) ? sum + value : sum;
+    }, 0);
+    if (amount > 0) samples.push({ month: monthKey(month), amount });
   }
-  if (!amounts.length) return 0;
-  return amounts.reduce((sum, n) => sum + n, 0) / amounts.length;
+  const total = samples.reduce((sum, sample) => sum + sample.amount, 0);
+  return { amount: samples.length ? total / samples.length : 0, samples };
 }
 
 export function cashRecurringPaid(

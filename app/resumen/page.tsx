@@ -11,6 +11,7 @@ import { TransactionEdit } from "@/components/entry/transaction-edit";
 import { RecurringEdit } from "@/components/entry/recurring-edit";
 import { EdesurMeterPhotos } from "@/components/dashboard/edesur-photos";
 import { EdesurSplitDialog } from "@/components/dashboard/edesur-split";
+import { MonthReport } from "@/components/dashboard/month-report";
 import { MovementRow } from "@/components/dashboard/movement-row";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -88,6 +89,7 @@ function ResumenInner() {
     cycleCard,
     edesurMonths,
     saveEdesurMonth,
+    salarySamples,
   } = view;
   const { unlocked, askPin, pinError, guard, submitPin, closePin } = useEditGate();
   const dropInstallment = useDropInstallment();
@@ -258,6 +260,17 @@ function ResumenInner() {
     : null;
   const edesurBalance = edesurSplit ? brotherSettlement(edesurSplit.brother, edesurReceived) : null;
   const monthName = format(cursor, "MMMM", { locale: es });
+  const salaryNote = estimated
+    ? salarySamples.length
+      ? `El sueldo estimado sale del promedio de tu sueldo cobrado: ${salarySamples
+          .map((sample) => {
+            const [year, month] = sample.month.split("-").map(Number);
+            const name = format(new Date(year, (month || 1) - 1, 1), "MMMM yyyy", { locale: es });
+            return `${name} ${formatMoney(sample.amount, "ARS")}`;
+          })
+          .join(", ")}. Mira hasta 6 meses atrás y usa como máximo 3 cobros. Los otros ingresos no entran.`
+      : "Todavía no hay un sueldo cobrado para estimar este mes."
+    : null;
   const sueldoMes = estimated && income.sueldo <= 0 ? wallet.cobrado : income.sueldo;
   const ingresosMes = estimated ? 0 : income.ingresos;
   const masked = (amount: number) => (hideSueldo ? "••••••" : formatMoney(amount, "ARS"));
@@ -619,8 +632,34 @@ function ResumenInner() {
     }
   }
 
+  const reportBills = services.flatMap((item) => {
+    const shown = shownRecurring(item, viewedMonth, transactions);
+    if (!shown || shown.voided) return [];
+    const via = recurringVia(item);
+    const paid = !via.onCard && cashRecurringPaid(item, transactions, cursor, isCurrent);
+    return [
+      {
+        name: item.name,
+        amount: formatMoney(shown.amount, shown.currency),
+        detail: via.onCard ? "Tarjeta" : paid ? "Pagado" : `Día ${item.due_day}`,
+      },
+    ];
+  });
+
+  function downloadPdf() {
+    const previous = document.title;
+    document.title = `SS Cuentas ${format(cursor, "MMMM yyyy", { locale: es })}`;
+    const restore = () => {
+      document.title = previous;
+      window.removeEventListener("afterprint", restore);
+    };
+    window.addEventListener("afterprint", restore);
+    window.print();
+  }
+
   return (
-    <div className={cn("mx-auto w-full min-w-0 max-w-lg space-y-3 md:max-w-2xl", picking && "pb-24")}>
+    <>
+    <div className={cn("no-print mx-auto w-full min-w-0 max-w-lg space-y-3 md:max-w-2xl", picking && "pb-24")}>
       <div>
         <div className="mb-1.5 flex items-center justify-between gap-1">
           <Button
@@ -661,17 +700,23 @@ function ResumenInner() {
             <p className="text-[11px] text-muted-foreground">
               Sueldo, ingresos, las dos tarjetas y la transferencia, abajo.
             </p>
+            {salaryNote ? <p className="mt-1 text-[10px] leading-snug text-muted-foreground">{salaryNote}</p> : null}
           </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-8 w-8 p-0"
-            aria-label={hideSueldo ? "Mostrar sueldo" : "Ocultar sueldo"}
-            onClick={() => setHideSueldo((v) => !v)}
-          >
-            {hideSueldo ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-          </Button>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <Button type="button" size="sm" variant="outline" className="h-8 px-2 text-xs" onClick={downloadPdf}>
+              PDF
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-8 w-8 p-0"
+              aria-label={hideSueldo ? "Mostrar sueldo" : "Ocultar sueldo"}
+              onClick={() => setHideSueldo((v) => !v)}
+            >
+              {hideSueldo ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -1292,5 +1337,50 @@ function ResumenInner() {
         </DialogContent>
       </Dialog>
     </div>
+    <MonthReport
+      monthLabel={format(cursor, "MMMM yyyy", { locale: es })}
+      queda={wallet.queda}
+      estimated={estimated}
+      salaryNote={salaryNote}
+      sueldo={sueldoMes}
+      otros={ingresosMes}
+      incomeLines={incomeLines}
+      visaMia={visaMia}
+      visaPapa={visaPapa}
+      tarjetaAbierta={tarjetaAbierta}
+      periodLabel={`Tarjetas del ${dayLabel(prevClose)} al ${dayLabel(closeOn)}.`}
+      nextPayLabel={tarjetaAbierta > 0 ? `Se abonan en ${nextName}.` : "Sin consumo en las tarjetas."}
+      cardDueLabel={
+        cardDue.total > 0 || cardPaid
+          ? cardPaid
+            ? `Tarjeta del mes anterior pagada ${formatMoney(cardPaidAmount, "ARS")}. Ya descuenta este sueldo.`
+            : `Tarjeta del mes anterior ${formatMoney(cardDue.total, "ARS")}. Cuando la pagues, descuenta este sueldo.`
+          : null
+      }
+      cash={wallet.gastadoContado}
+      moves={monthMoves}
+      categories={categories}
+      cards={cards}
+      toArs={toArs}
+      bills={reportBills}
+      brother={
+        edesurSplit && edesurBalance
+          ? {
+              share: formatMoney(edesurSplit.brother, "ARS"),
+              received: formatMoney(edesurReceived, "ARS"),
+              status:
+                edesurBalance.kind === "cubierto"
+                  ? "Cubre su parte de este mes."
+                  : edesurBalance.kind === "demas"
+                    ? `Te pasó ${formatMoney(edesurBalance.amount, "ARS")} de más en este mes.`
+                    : `Le faltan ${formatMoney(edesurBalance.amount, "ARS")} de este mes.`,
+              kwh: savedEdesur
+                ? `${savedEdesur.mineKwh.toLocaleString("es-AR")} kWh tuyos y ${savedEdesur.brotherKwh.toLocaleString("es-AR")} kWh de él, sobre ${savedEdesur.totalKwh.toLocaleString("es-AR")} kWh.`
+                : "",
+            }
+          : null
+      }
+    />
+    </>
   );
 }

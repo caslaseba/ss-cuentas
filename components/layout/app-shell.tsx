@@ -95,18 +95,18 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       <main className="zoom-content pb-[calc(6.5rem+env(safe-area-inset-bottom))]">
         <div className="mx-auto w-full min-w-0 max-w-lg px-3 py-4 sm:px-4 sm:py-6 md:max-w-2xl xl:max-w-5xl">
           {!online && (
-            <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
+            <div className="no-print mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
               Estás offline. Lo que cargues se sube cuando vuelvas a tener internet.
             </div>
           )}
           {online && pendingSync > 0 && (
-            <div className="mb-4 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-sm">
+            <div className="no-print mb-4 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-sm">
               Hay {pendingSync} movimiento{pendingSync === 1 ? "" : "s"} guardado{pendingSync === 1 ? "" : "s"} en este
               aparato, subiendo ahora.
             </div>
           )}
           {loadError && !loading ? (
-            <div className="mb-4 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-3 text-sm">
+            <div className="no-print mb-4 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-3 text-sm">
               <p>{loadError}</p>
               <Button className="mt-3" size="sm" variant="outline" onClick={() => void refresh()}>
                 Reintentar
@@ -114,7 +114,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             </div>
           ) : null}
           {loading ? (
-            <div className="space-y-3">
+            <div className="no-print space-y-3">
               <p className="text-sm text-muted-foreground">
                 Cargando tus cuentas… la primera vez arma el programa y después entra más rápido.
               </p>
