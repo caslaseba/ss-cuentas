@@ -103,6 +103,23 @@ export function meterConsumption(previous: number | null | undefined, current: n
   return Math.round((current - previous) * 100) / 100;
 }
 
+export function blankEdesurMonth(month: string): EdesurMonth {
+  return {
+    month,
+    totalKwh: 0,
+    totalBill: 0,
+    mineKwh: 0,
+    brotherKwh: 0,
+    brother2Kwh: 0,
+    brotherReading: null,
+    brotherReadAt: null,
+    brother2Reading: null,
+    brother2ReadAt: null,
+    mineReading: null,
+    mineReadAt: null,
+  };
+}
+
 export function withEdesurMonth(list: EdesurMonth[], next: EdesurMonth) {
   return [...list.filter((item) => item.month !== next.month), next].sort((a, b) => a.month.localeCompare(b.month));
 }

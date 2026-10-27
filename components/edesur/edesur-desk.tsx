@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
 import {
+  blankEdesurMonth,
   edesurPhotoLabel,
   formatReadingStamp,
   isEdesurName,
@@ -23,7 +24,8 @@ import {
   type EdesurPhoto,
   type EdesurPhotoLabel,
 } from "@/lib/finance/edesur";
-import { signEdesurPhoto } from "@/lib/finance/edesur-photos";
+import { EDESUR_METER_BUCKET, signEdesurPhoto } from "@/lib/finance/edesur-photos";
+import { renderInvoicePages } from "@/lib/finance/invoice-pages";
 import { shownRecurring } from "@/lib/finance/recurring";
 import { APP_VERSION } from "@/lib/version";
 import { createClient } from "@/lib/supabase/client";
@@ -39,10 +41,10 @@ const METERS = [
 
 type MeterLabel = (typeof METERS)[number]["label"];
 
-type MeterDraft = { reading: string; at: string; kwh: string };
+type MeterDraft = { reading: string; at: string };
 
 function emptyDraft(): MeterDraft {
-  return { reading: "", at: "", kwh: "" };
+  return { reading: "", at: "" };
 }
 
 function kwhText(value: number) {
@@ -66,6 +68,20 @@ function readingText(value: number | null | undefined) {
   return value == null ? "" : formatAmountFromNumber(value);
 }
 
+function isPdfPath(path: string) {
+  return path.toLowerCase().endsWith(".pdf");
+}
+
+function monthTitle(key: string) {
+  const [year, month] = key.split("-").map(Number);
+  if (!year || !month) return key;
+  return format(new Date(year, month - 1, 1), "MMMM yyyy", { locale: es });
+}
+
+function shownInHistory(item: EdesurMonth) {
+  return item.totalBill > 0 || item.totalKwh > 0 || item.mineKwh > 0 || item.brotherKwh > 0 || item.brother2Kwh > 0;
+}
+
 export function EdesurDesk({ initial }: { initial?: Date }) {
   const router = useRouter();
   const view = useMonthView(initial);
@@ -74,7 +90,7 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     canGoNext,
     canGoPrev,
     edesurMonths,
-    saveEdesurMonth,
+    saveEdesurMonths,
     edesurPhotos,
     addEdesurPhoto,
     removeEdesurPhoto,
@@ -117,6 +133,12 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     hermano2: emptyDraft(),
     mio: emptyDraft(),
   });
+  const [prior, setPrior] = useState<Record<MeterLabel, MeterDraft>>({
+    hermano: emptyDraft(),
+    hermano2: emptyDraft(),
+    mio: emptyDraft(),
+  });
+  const [invoicePages, setInvoicePages] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [urls, setUrls] = useState<Record<string, string>>({});
@@ -127,21 +149,9 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
       setTotalKwh(blankIfZero(saved.totalKwh));
       setBill(blankIfZero(saved.totalBill));
       setDrafts({
-        hermano: {
-          reading: readingText(saved.brotherReading),
-          at: readingInputValue(saved.brotherReadAt),
-          kwh: blankIfZero(saved.brotherKwh),
-        },
-        hermano2: {
-          reading: readingText(saved.brother2Reading),
-          at: readingInputValue(saved.brother2ReadAt),
-          kwh: blankIfZero(saved.brother2Kwh),
-        },
-        mio: {
-          reading: readingText(saved.mineReading),
-          at: readingInputValue(saved.mineReadAt),
-          kwh: blankIfZero(saved.mineKwh),
-        },
+        hermano: { reading: readingText(saved.brotherReading), at: readingInputValue(saved.brotherReadAt) },
+        hermano2: { reading: readingText(saved.brother2Reading), at: readingInputValue(saved.brother2ReadAt) },
+        mio: { reading: readingText(saved.mineReading), at: readingInputValue(saved.mineReadAt) },
       });
       return;
     }
@@ -183,26 +193,80 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [photoKey]);
 
-  function previousReading(label: MeterLabel) {
+  const priorKey = [
+    previousKey,
+    previous?.brotherReading ?? "",
+    previous?.brotherReadAt ?? "",
+    previous?.brother2Reading ?? "",
+    previous?.brother2ReadAt ?? "",
+    previous?.mineReading ?? "",
+    previous?.mineReadAt ?? "",
+  ].join(":");
+
+  useEffect(() => {
+    setPrior({
+      hermano: { reading: readingText(previous?.brotherReading), at: readingInputValue(previous?.brotherReadAt) },
+      hermano2: { reading: readingText(previous?.brother2Reading), at: readingInputValue(previous?.brother2ReadAt) },
+      mio: { reading: readingText(previous?.mineReading), at: readingInputValue(previous?.mineReadAt) },
+    });
+    // priorKey cambia al pasar de mes o al guardar la lectura anterior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priorKey]);
+
+  const invoiceFiles = edesurPhotos.filter((photo) => photo.month === month && photo.label === "factura" && isPdfPath(photo.path));
+  const invoiceKey = invoiceFiles.map((photo) => photo.path).join("|");
+
+  useEffect(() => {
+    if (!invoiceKey || !hasSupabaseConfig()) {
+      setInvoicePages([]);
+      return;
+    }
+    let cancel = false;
+    const supabase = createClient();
+    void (async () => {
+      const pages: string[] = [];
+      for (const photo of invoiceFiles) {
+        const downloaded = await supabase.storage.from(EDESUR_METER_BUCKET).download(photo.path);
+        if (downloaded.error || !downloaded.data) continue;
+        try {
+          const rendered = await renderInvoicePages(await downloaded.data.arrayBuffer());
+          pages.push(...rendered);
+        } catch {
+          // La factura sigue adjunta aunque una hoja no se pueda dibujar.
+        }
+      }
+      if (!cancel) setInvoicePages(pages.slice(0, 8));
+    })();
+    return () => {
+      cancel = true;
+    };
+    // invoiceKey identifica los PDF de este mes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceKey]);
+
+  function storedPrevious(label: MeterLabel) {
     if (!previous) return null;
     if (label === "hermano") return previous.brotherReading;
     if (label === "hermano2") return previous.brother2Reading;
     return previous.mineReading;
   }
 
+  function previousReading(label: MeterLabel) {
+    const stored = storedPrevious(label);
+    if (stored != null) return stored;
+    return prior[label].reading.trim() ? parseAmountInput(prior[label].reading) : null;
+  }
+
   function previousStamp(label: MeterLabel) {
-    if (!previous) return null;
-    if (label === "hermano") return previous.brotherReadAt;
-    if (label === "hermano2") return previous.brother2ReadAt;
-    return previous.mineReadAt;
+    if (label === "hermano" && previous?.brotherReadAt) return previous.brotherReadAt;
+    if (label === "hermano2" && previous?.brother2ReadAt) return previous.brother2ReadAt;
+    if (label === "mio" && previous?.mineReadAt) return previous.mineReadAt;
+    return readingIsoFromInput(prior[label].at);
   }
 
   function consumptionOf(label: MeterLabel) {
-    const draft = drafts[label];
-    const current = draft.reading.trim() ? parseAmountInput(draft.reading) : null;
-    const diff = meterConsumption(previousReading(label), current);
-    if (diff != null) return { kwh: diff, fromReadings: true as const };
-    return { kwh: parseAmountInput(draft.kwh), fromReadings: false as const };
+    const current = drafts[label].reading.trim() ? parseAmountInput(drafts[label].reading) : null;
+    return meterConsumption(previousReading(label), current);
   }
 
   const consumptions = {
@@ -210,14 +274,16 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     hermano2: consumptionOf("hermano2"),
     mio: consumptionOf("mio"),
   };
-  const negative = METERS.some((meter) => consumptions[meter.label].fromReadings && consumptions[meter.label].kwh < 0);
+  const negative = METERS.some((meter) => (consumptions[meter.label] ?? 0) < 0 && consumptions[meter.label] != null);
+  const complete = METERS.every((meter) => (consumptions[meter.label] ?? -1) >= 0);
   const numbers = {
     totalKwh: parseAmountInput(totalKwh),
     totalBill: parseAmountInput(bill),
-    brotherKwh: Math.max(0, consumptions.hermano.kwh),
-    brother2Kwh: Math.max(0, consumptions.hermano2.kwh),
-    mineKwh: Math.max(0, consumptions.mio.kwh),
+    brotherKwh: Math.max(0, consumptions.hermano ?? 0),
+    brother2Kwh: Math.max(0, consumptions.hermano2 ?? 0),
+    mineKwh: Math.max(0, consumptions.mio ?? 0),
   };
+  const meterKwh = numbers.brotherKwh + numbers.brother2Kwh + numbers.mineKwh;
   const split = splitBillByKwh(numbers);
 
   function payload(): EdesurMonth {
@@ -246,18 +312,67 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     });
   }
 
-  async function save() {
-    if (negative) {
-      toast.error("Una lectura de este mes es menor que la del mes anterior.");
-      return false;
+  function updatePrior(label: MeterLabel, patch: Partial<MeterDraft>) {
+    setPrior((current) => {
+      const next = { ...current[label], ...patch };
+      if (patch.reading != null && patch.reading.trim() && !next.at) next.at = readingInputValue(new Date().toISOString());
+      return { ...current, [label]: next };
+    });
+  }
+
+  function amountOf(label: MeterLabel) {
+    if (!split || split.exceeds) return null;
+    if (label === "hermano") return split.brother1;
+    if (label === "hermano2") return split.brother2;
+    return split.mine;
+  }
+
+  function previousPayload(): EdesurMonth | null {
+    const base = previous ? { ...previous } : blankEdesurMonth(previousKey);
+    let changed = false;
+    for (const meter of METERS) {
+      if (storedPrevious(meter.label) != null || !prior[meter.label].reading.trim()) continue;
+      changed = true;
+      const value = parseAmountInput(prior[meter.label].reading);
+      const at = readingIsoFromInput(prior[meter.label].at) ?? new Date().toISOString();
+      if (meter.label === "hermano") {
+        base.brotherReading = value;
+        base.brotherReadAt = at;
+      } else if (meter.label === "hermano2") {
+        base.brother2Reading = value;
+        base.brother2ReadAt = at;
+      } else {
+        base.mineReading = value;
+        base.mineReadAt = at;
+      }
     }
+    return changed ? base : null;
+  }
+
+  function blockReason() {
+    if (negative) return "Una lectura de este mes es menor que la del mes anterior.";
+    if (!complete) return "Falta la lectura del mes pasado o la lectura actual de algún medidor.";
+    if (!(numbers.totalBill > 0) || !(numbers.totalKwh > 0)) return "Escribí el total de la factura y los kWh que dice la factura.";
     if (split?.exceeds) {
-      toast.error("Los kWh de los medidores superan el total de la factura.");
+      return `Los medidores suman ${kwhText(meterKwh)} kWh y la factura dice ${kwhText(numbers.totalKwh)}. No puede pasar de lo que dice la factura.`;
+    }
+    return null;
+  }
+
+  async function save() {
+    const reason = negative
+      ? "Una lectura de este mes es menor que la del mes anterior."
+      : split?.exceeds
+        ? `Los medidores suman ${kwhText(meterKwh)} kWh y la factura dice ${kwhText(numbers.totalKwh)}. No puede pasar de lo que dice la factura.`
+        : null;
+    if (reason) {
+      toast.error(reason);
       return false;
     }
     setSaving(true);
     try {
-      await saveEdesurMonth(payload());
+      const earlier = previousPayload();
+      await saveEdesurMonths(earlier ? [earlier, payload()] : [payload()]);
       toast.success(`Informe de EDESUR guardado en ${monthLabel}.`);
       return true;
     } catch (err) {
@@ -269,14 +384,9 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
   }
 
   async function download() {
-    if (!split || split.exceeds || negative) {
-      toast.error(
-        negative
-          ? "Una lectura de este mes es menor que la del mes anterior."
-          : split?.exceeds
-            ? "Los kWh de los medidores superan el total de la factura."
-            : "Completá el total de la factura y los kWh.",
-      );
+    const reason = blockReason();
+    if (reason) {
+      toast.error(reason);
       return;
     }
     const ok = await save();
@@ -293,15 +403,16 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
     window.print();
   }
 
-  async function onFile(label: EdesurPhotoLabel, file: File | undefined) {
+  async function onFile(label: EdesurPhotoLabel, file: File | undefined, targetMonth = month) {
     if (!file) return;
     setBusy(true);
     try {
-      await addEdesurPhoto(month, label, file);
-      if (label !== "factura") {
+      await addEdesurPhoto(targetMonth, label, file);
+      if (label !== "factura" && targetMonth === month) {
         updateDraft(label, { at: drafts[label].at || readingInputValue(new Date().toISOString()) });
       }
-      toast.success(`${edesurPhotoLabel(label)} guardada en ${monthLabel}.`);
+      const where = targetMonth === month ? monthLabel : monthTitle(targetMonth);
+      toast.success(`${edesurPhotoLabel(label)} guardada en ${where}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo guardar la foto");
     } finally {
@@ -337,7 +448,7 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Informe EDESUR</h1>
           <p className="text-sm text-muted-foreground">
-            Cada medidor muestra la foto y la lectura del mes anterior al lado de la de este mes. La diferencia es lo que se consumió.
+            Traigo la lectura del mes pasado. Vos cargás la lectura de la medición actual. El consumo es esa resta. El precio del kWh es el total de la factura dividido por los kWh que dice la factura, y cada medidor paga su consumo por ese precio. Los kWh de los tres medidores no pueden pasar de lo que dice la factura.
           </p>
         </div>
         <div className="flex items-center justify-between gap-1">
@@ -353,8 +464,10 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
         {METERS.map((meter) => {
           const before = comparedPhotos.filter((photo) => photo.month === previousKey && photo.label === meter.label);
           const now = comparedPhotos.filter((photo) => photo.month === month && photo.label === meter.label);
-          const prior = previousReading(meter.label);
+          const lastReading = previousReading(meter.label);
+          const lastStored = storedPrevious(meter.label);
           const used = consumptions[meter.label];
+          const amount = amountOf(meter.label);
           return (
             <section key={meter.label} className="space-y-2 rounded-md border border-border p-2">
               <h2 className="text-sm font-medium">{meter.title}</h2>
@@ -366,6 +479,7 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
                   busy={busy}
                   onZoom={setZoom}
                   onRemove={remove}
+                  onAdd={(file) => void onFile(meter.label, file, previousKey)}
                 />
                 <div>
                   <p className="text-[10px] font-medium capitalize text-muted-foreground">{monthLabel}</p>
@@ -407,24 +521,49 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
                   <PhotoList photos={now} urls={urls} busy={busy} onZoom={setZoom} onRemove={remove} />
                 </div>
               </div>
-              <p className="text-[11px] text-muted-foreground">
-                {prior == null
-                  ? `No hay lectura de ${previousLabel}.`
-                  : `Lectura de ${previousLabel}: ${kwhText(prior)} kWh${previousStamp(meter.label) ? ` · ${formatReadingStamp(previousStamp(meter.label))}` : ""}`}
-              </p>
+              {lastStored == null ? (
+                <>
+                  <div>
+                    <Label htmlFor={`${meter.label}-prev`}>Lectura de {previousLabel}</Label>
+                    <Input
+                      id={`${meter.label}-prev`}
+                      className="mt-1.5"
+                      inputMode="decimal"
+                      value={prior[meter.label].reading}
+                      onChange={(event) => updatePrior(meter.label, { reading: event.target.value })}
+                      placeholder="El número que marcaba el mes pasado"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor={`${meter.label}-prev-at`}>Fecha y hora de esa medición</Label>
+                    <Input
+                      id={`${meter.label}-prev-at`}
+                      className="mt-1.5"
+                      type="datetime-local"
+                      value={prior[meter.label].at}
+                      onChange={(event) => updatePrior(meter.label, { at: event.target.value })}
+                    />
+                  </div>
+                </>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  Lectura de {previousLabel}: {kwhText(lastStored)} kWh
+                  {previousStamp(meter.label) ? ` · ${formatReadingStamp(previousStamp(meter.label))}` : ""}
+                </p>
+              )}
               <div>
-                <Label htmlFor={`${meter.label}-reading`}>Lectura de este mes</Label>
+                <Label htmlFor={`${meter.label}-reading`}>Lectura de la medición actual</Label>
                 <Input
                   id={`${meter.label}-reading`}
                   className="mt-1.5"
                   inputMode="decimal"
                   value={drafts[meter.label].reading}
                   onChange={(event) => updateDraft(meter.label, { reading: event.target.value })}
-                  placeholder="El número que marca el medidor"
+                  placeholder="El número que marca el medidor ahora"
                 />
               </div>
               <div>
-                <Label htmlFor={`${meter.label}-at`}>Fecha y hora de la medición</Label>
+                <Label htmlFor={`${meter.label}-at`}>Fecha y hora de la medición actual</Label>
                 <Input
                   id={`${meter.label}-at`}
                   className="mt-1.5"
@@ -433,24 +572,16 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
                   onChange={(event) => updateDraft(meter.label, { at: event.target.value })}
                 />
               </div>
-              {used.fromReadings ? (
-                <p className={`text-sm font-medium ${used.kwh < 0 ? "text-destructive" : ""}`}>
-                  {used.kwh < 0
-                    ? "La lectura de este mes es menor que la anterior."
-                    : `Consumió ${kwhText(used.kwh)} kWh entre las dos mediciones.`}
-                </p>
+              {used == null ? (
+                <p className="text-[11px] text-muted-foreground">Falta una de las dos lecturas para calcular el consumo.</p>
+              ) : used < 0 ? (
+                <p className="text-sm font-medium text-destructive">La lectura actual es menor que la del mes pasado.</p>
               ) : (
-                <div>
-                  <Label htmlFor={`${meter.label}-kwh`}>kWh de este período</Label>
-                  <Input
-                    id={`${meter.label}-kwh`}
-                    className="mt-1.5"
-                    inputMode="decimal"
-                    value={drafts[meter.label].kwh}
-                    onChange={(event) => updateDraft(meter.label, { kwh: event.target.value })}
-                    placeholder="Hasta tener la lectura anterior"
-                  />
-                </div>
+                <p className="text-sm font-medium">
+                  Consumió {kwhText(used)} kWh
+                  {lastReading != null ? ` (${kwhText(parseAmountInput(drafts[meter.label].reading))} − ${kwhText(lastReading)})` : ""}.
+                  {amount != null ? ` ${kwhText(used)} kWh × ${priceText(split?.rate ?? 0)} = ${formatMoney(amount, "ARS")}.` : ""}
+                </p>
               )}
             </section>
           );
@@ -493,7 +624,28 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
               </span>
             </label>
           </div>
+          <label>
+            <input
+              className="sr-only"
+              type="file"
+              accept="application/pdf,.pdf"
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                void onFile("factura", file);
+              }}
+            />
+            <span className="inline-flex h-8 w-full cursor-pointer items-center justify-center rounded-md border border-border px-2 text-[11px] font-medium">
+              {busy ? "Guardando…" : "Adjuntar el PDF de la factura"}
+            </span>
+          </label>
           <PhotoList photos={facturaPhotos} urls={urls} busy={busy} onZoom={setZoom} onRemove={remove} />
+          {invoicePages.length ? (
+            <p className="text-[11px] text-muted-foreground">
+              El PDF entra en el informe, {invoicePages.length} {invoicePages.length === 1 ? "hoja" : "hojas"}.
+            </p>
+          ) : null}
         </section>
 
         <div className="space-y-2 rounded-md border border-border p-3">
@@ -506,7 +658,17 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
             <Label htmlFor="edesur-kwh">Total de kWh de la factura</Label>
             <Input id="edesur-kwh" className="mt-1.5" inputMode="decimal" value={totalKwh} onChange={(event) => setTotalKwh(event.target.value)} placeholder="Ej. 850" />
           </div>
-          {split?.exceeds ? <p className="text-xs text-destructive">Entre los tres medidores superan los kWh totales de la factura.</p> : null}
+          {split && !split.exceeds ? (
+            <p className="text-xs">
+              El kWh de este mes sale {priceText(split.rate)}. Es {formatMoney(numbers.totalBill, "ARS")} ÷ {kwhText(numbers.totalKwh)} kWh.
+            </p>
+          ) : null}
+          {split?.exceeds ? (
+            <p className="text-xs text-destructive">
+              Los medidores suman {kwhText(meterKwh)} kWh y la factura dice {kwhText(numbers.totalKwh)}. No puede pasar de lo que dice la factura.
+            </p>
+          ) : null}
+          {negative ? <p className="text-xs text-destructive">Una lectura actual es menor que la del mes pasado.</p> : null}
           <div className="flex gap-2">
             <Button type="button" className="flex-1" disabled={saving} onClick={() => void save()}>
               {saving ? "Guardando…" : "Guardar"}
@@ -517,7 +679,40 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
           </div>
           <p className="text-[11px] text-muted-foreground">Descargar abre el diálogo del navegador. Ahí elegís Guardar como PDF.</p>
         </div>
+
+        <section className="space-y-2">
+          <h2 className="text-sm font-medium">Historial</h2>
+          {edesurMonths.some(shownInHistory) ? (
+            <ul className="space-y-1">
+              {[...edesurMonths].reverse().filter(shownInHistory).map((item) => {
+                const piece = splitBillByKwh(item);
+                const current = item.month === month;
+                return (
+                  <li key={item.month}>
+                    <Link
+                      href={`/edesur?mes=${item.month}`}
+                      className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-xs ${current ? "border-primary" : "border-border"}`}
+                    >
+                      <span className="capitalize">{monthTitle(item.month)}</span>
+                      {piece ? (
+                        <span className="text-right text-muted-foreground">
+                          LEO {formatMoney(piece.brother, "ARS")} · Seba {formatMoney(piece.mine, "ARS")}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">Sin cuenta</span>
+                      )}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground">Todavía no hay meses guardados. El primero queda acá cuando guardás.</p>
+          )}
+        </section>
       </div>
+
+      <p className="no-print text-sm font-medium">Vista del informe para tu hermano</p>
 
       <EdesurSheet
         monthLabel={monthLabel}
@@ -533,10 +728,15 @@ export function EdesurDesk({ initial }: { initial?: Date }) {
           previousAt: previousStamp(meter.label),
           currentReading: drafts[meter.label].reading.trim() ? parseAmountInput(drafts[meter.label].reading) : null,
           currentAt: readingIsoFromInput(drafts[meter.label].at),
-          consumed: consumptions[meter.label].kwh,
-          fromReadings: consumptions[meter.label].fromReadings,
+          consumed: consumptions[meter.label],
         }))}
-        facturaUrls={photoUrls(comparedPhotos, month, "factura", urls)}
+        facturaUrls={photoUrls(
+          comparedPhotos.filter((photo) => !isPdfPath(photo.path)),
+          month,
+          "factura",
+          urls,
+        )}
+        invoicePages={invoicePages}
       />
 
       {zoom && urls[zoom.id] ? (
@@ -570,6 +770,7 @@ function PhotoColumn({
   busy,
   onZoom,
   onRemove,
+  onAdd,
 }: {
   title: string;
   photos: EdesurPhoto[];
@@ -577,11 +778,30 @@ function PhotoColumn({
   busy: boolean;
   onZoom: (photo: EdesurPhoto) => void;
   onRemove: (photo: EdesurPhoto) => void;
+  onAdd?: (file: File) => void;
 }) {
   return (
     <div>
       <p className="text-[10px] font-medium capitalize text-muted-foreground">{title}</p>
-      <PhotoList photos={photos} urls={urls} busy={busy} onZoom={onZoom} onRemove={onRemove} readOnly />
+      {onAdd ? (
+        <label className="mt-1 block">
+          <input
+            className="sr-only"
+            type="file"
+            accept="image/*"
+            disabled={busy}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) onAdd(file);
+            }}
+          />
+          <span className="inline-flex h-8 w-full cursor-pointer items-center justify-center rounded-md border border-border px-2 text-[11px] font-medium">
+            Foto del mes pasado
+          </span>
+        </label>
+      ) : null}
+      <PhotoList photos={photos} urls={urls} busy={busy} onZoom={onZoom} onRemove={onRemove} readOnly={!onAdd} />
     </div>
   );
 }
@@ -604,24 +824,31 @@ function PhotoList({
   if (!photos.length) return <p className="mt-1 text-[11px] text-muted-foreground">Sin foto.</p>;
   return (
     <div className="mt-1 space-y-2">
-      {photos.map((photo) => (
-        <figure key={photo.id} className="overflow-hidden rounded-md border border-border bg-white">
-          <button type="button" className="block w-full" onClick={() => urls[photo.id] && onZoom(photo)}>
-            {urls[photo.id] ? (
-              <img src={urls[photo.id]} alt={edesurPhotoLabel(photo.label)} className="aspect-[4/3] w-full object-contain" />
+      {photos.map((photo) => {
+        const pdf = isPdfPath(photo.path);
+        return (
+          <figure key={photo.id} className="overflow-hidden rounded-md border border-border bg-white">
+            {pdf ? (
+              <p className="px-2 py-3 text-xs">PDF de la factura</p>
             ) : (
-              <span className="block aspect-[4/3] w-full bg-muted" />
-            )}
-          </button>
-          {readOnly ? null : (
-            <figcaption className="flex justify-end px-1.5 py-1">
-              <button type="button" className="text-[10px] font-medium text-destructive" disabled={busy} onClick={() => void onRemove(photo)}>
-                Quitar
+              <button type="button" className="block w-full" onClick={() => urls[photo.id] && onZoom(photo)}>
+                {urls[photo.id] ? (
+                  <img src={urls[photo.id]} alt={edesurPhotoLabel(photo.label)} className="aspect-[4/3] w-full object-contain" />
+                ) : (
+                  <span className="block aspect-[4/3] w-full bg-muted" />
+                )}
               </button>
-            </figcaption>
-          )}
-        </figure>
-      ))}
+            )}
+            {readOnly ? null : (
+              <figcaption className="flex justify-end px-1.5 py-1">
+                <button type="button" className="text-[10px] font-medium text-destructive" disabled={busy} onClick={() => void onRemove(photo)}>
+                  Quitar
+                </button>
+              </figcaption>
+            )}
+          </figure>
+        );
+      })}
     </div>
   );
 }
@@ -633,6 +860,7 @@ function EdesurSheet({
   split,
   meters,
   facturaUrls,
+  invoicePages,
 }: {
   monthLabel: string;
   previousLabel: string;
@@ -647,12 +875,14 @@ function EdesurSheet({
     previousAt: string | null;
     currentReading: number | null;
     currentAt: string | null;
-    consumed: number;
-    fromReadings: boolean;
+    consumed: number | null;
   }[];
   facturaUrls: string[];
+  invoicePages: string[];
 }) {
-  const hasPhoto = meters.some((meter) => meter.previousUrls.length || meter.currentUrls.length) || facturaUrls.length > 0;
+  const hasPhotos = meters.some((meter) => meter.previousUrls.length || meter.currentUrls.length);
+  const hasInvoice = invoicePages.length > 0 || facturaUrls.length > 0;
+  const amounts = split && !split.exceeds ? split : null;
   return (
     <article id="edesur-report" className="rounded-md bg-white px-4 py-4 text-black shadow-sm">
       <header style={{ background: "#0f766e", color: "#fff", borderRadius: 10, padding: "14px 16px" }}>
@@ -661,79 +891,90 @@ function EdesurSheet({
         <p style={{ margin: "4px 0 0", fontSize: 14, textTransform: "capitalize" }}>{monthLabel}</p>
       </header>
 
-      {meters.map((meter) => (
-        <section key={meter.label} style={{ marginTop: 14, breakInside: "avoid" }}>
-          <h3 style={{ margin: "0 0 6px", fontSize: 16 }}>{meter.title}</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <SheetPhotos title={previousLabel} urls={meter.previousUrls} />
-            <SheetPhotos title={monthLabel} urls={meter.currentUrls} />
-          </div>
-          <p style={{ margin: "6px 0 0", fontSize: 12 }}>
-            {meter.previousReading == null
-              ? `Sin lectura de ${previousLabel}.`
-              : `Lectura anterior: ${kwhText(meter.previousReading)} kWh${meter.previousAt ? ` · ${formatReadingStamp(meter.previousAt)}` : ""}`}
-          </p>
-          <p style={{ margin: "2px 0 0", fontSize: 12 }}>
-            {meter.currentReading == null
-              ? "Sin lectura de este mes."
-              : `Lectura de este mes: ${kwhText(meter.currentReading)} kWh${meter.currentAt ? ` · ${formatReadingStamp(meter.currentAt)}` : ""}`}
-          </p>
-          <p style={{ margin: "4px 0 0", fontSize: 14, fontWeight: 700 }}>
-            {meter.fromReadings && meter.consumed < 0
-              ? "La lectura de este mes es menor que la anterior."
-              : meter.fromReadings
-                ? `Consumió ${kwhText(meter.consumed)} kWh entre las dos mediciones.`
-                : `kWh de este período: ${kwhText(meter.consumed)}.`}
-          </p>
-        </section>
-      ))}
-
       <section style={{ marginTop: 14 }}>
-        <h3 style={{ margin: "0 0 6px", fontSize: 16 }}>Portada de la factura</h3>
-        {facturaUrls.length ? (
-          facturaUrls.map((url) => (
-            <img key={url} src={url} alt="Portada de la factura" style={{ display: "block", width: "100%", maxHeight: "125mm", objectFit: "contain", background: "#f4f4f5", border: "1px solid #d4d4d8", borderRadius: 8, marginBottom: 8 }} />
-          ))
-        ) : (
-          <p style={{ margin: 0, fontSize: 12, color: "#71717a" }}>Sin foto de la factura.</p>
-        )}
-      </section>
-
-      <section style={{ breakBefore: hasPhoto ? "page" : "auto" }}>
-        <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Cálculo</h3>
-        {split ? (
+        <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Cuenta del mes</h3>
+        {split?.exceeds ? (
+          <p style={{ margin: 0, fontSize: 13 }}>
+            Los medidores suman {kwhText(numbers.brotherKwh + numbers.brother2Kwh + numbers.mineKwh)} kWh y la factura dice {kwhText(numbers.totalKwh)}. No puede pasar de lo que dice la factura.
+          </p>
+        ) : amounts ? (
           <>
             <p style={{ margin: "0 0 4px", fontSize: 13, display: "flex", justifyContent: "space-between", gap: 8 }}>
               <span>Total de la factura</span>
               <strong>{formatMoney(numbers.totalBill, "ARS")}</strong>
             </p>
             <p style={{ margin: "0 0 4px", fontSize: 13, display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <span>Total de kWh</span>
+              <span>kWh que dice la factura</span>
               <strong>{kwhText(numbers.totalKwh)}</strong>
             </p>
-            <p style={{ margin: "8px 0", fontSize: 13, lineHeight: 1.4 }}>
-              El kWh de este mes sale {priceText(split.rate)}. Es el total de la factura dividido por los kWh totales: {formatMoney(numbers.totalBill, "ARS")} ÷ {kwhText(numbers.totalKwh)} kWh.
+            <p style={{ margin: "8px 0", fontSize: 13, lineHeight: 1.45 }}>
+              El precio del kWh es el total de la factura dividido por los kWh de la factura: {formatMoney(numbers.totalBill, "ARS")} ÷ {kwhText(numbers.totalKwh)} kWh = {priceText(amounts.rate)}.
+              Cada medidor paga ese precio por lo que consumió. El consumo es la lectura actual menos la lectura del mes pasado.
             </p>
-            <MeterRow title="Medidor LEO casa" kwhValue={numbers.brotherKwh} rate={split.rate} amount={split.brother1} />
-            <MeterRow title="Medidor LEO's Garage" kwhValue={numbers.brother2Kwh} rate={split.rate} amount={split.brother2} />
+            {meters.map((meter) => {
+              const amount = meter.label === "hermano" ? amounts.brother1 : meter.label === "hermano2" ? amounts.brother2 : amounts.mine;
+              const consumed = meter.consumed != null && meter.consumed >= 0 ? meter.consumed : meter.label === "hermano" ? numbers.brotherKwh : meter.label === "hermano2" ? numbers.brother2Kwh : numbers.mineKwh;
+              return (
+                <div key={meter.label} style={{ marginBottom: 8, border: "1px solid #e4e4e7", borderRadius: 8, padding: "8px 10px", breakInside: "avoid" }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 650 }}>{meter.title}</p>
+                  <p style={{ margin: "4px 0 0", fontSize: 12 }}>
+                    {meter.previousReading == null
+                      ? `Sin lectura de ${previousLabel}.`
+                      : `Lectura de ${previousLabel}: ${kwhText(meter.previousReading)}${meter.previousAt ? ` · ${formatReadingStamp(meter.previousAt)}` : ""}`}
+                  </p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12 }}>
+                    {meter.currentReading == null
+                      ? "Sin lectura de la medición actual."
+                      : `Lectura de la medición actual: ${kwhText(meter.currentReading)}${meter.currentAt ? ` · ${formatReadingStamp(meter.currentAt)}` : ""}`}
+                  </p>
+                  <p style={{ margin: "4px 0 0", fontSize: 12, color: "#3f3f46" }}>
+                    {kwhText(consumed)} kWh × {priceText(amounts.rate)}
+                  </p>
+                  <p style={{ margin: "4px 0 0", fontSize: 16, fontWeight: 700 }}>{formatMoney(amount, "ARS")}</p>
+                </div>
+              );
+            })}
             <p style={{ margin: "8px 0", padding: "8px 10px", background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 8, display: "flex", justifyContent: "space-between", gap: 8 }}>
               <strong>Total de LEO</strong>
-              <strong>{formatMoney(split.brother, "ARS")}</strong>
+              <strong>{formatMoney(amounts.brother, "ARS")}</strong>
             </p>
-            <MeterRow title="Medidor Seba" kwhValue={numbers.mineKwh} rate={split.rate} amount={split.mine} />
             <p style={{ margin: "8px 0 0", padding: "8px 10px", background: "#f0fdfa", border: "1px solid #99f6e4", borderRadius: 8, display: "flex", justifyContent: "space-between", gap: 8 }}>
               <strong>Lo que paga Seba</strong>
-              <strong>{formatMoney(split.mine, "ARS")}</strong>
+              <strong>{formatMoney(amounts.mine, "ARS")}</strong>
             </p>
-            {split.otherKwh > 0.000001 ? (
+            {amounts.otherKwh > 0.000001 ? (
               <p style={{ margin: "8px 0 0", fontSize: 12 }}>
-                Quedan {kwhText(split.otherKwh)} kWh sin asignar, por {formatMoney(split.otherAmount, "ARS")}.
+                Quedan {kwhText(amounts.otherKwh)} kWh de la factura sin asignar, por {formatMoney(amounts.otherAmount, "ARS")}.
               </p>
             ) : null}
           </>
         ) : (
-          <p style={{ margin: 0, fontSize: 13 }}>Falta el total de la factura y el total de kWh para hacer la cuenta.</p>
+          <p style={{ margin: 0, fontSize: 13 }}>Falta el total de la factura, los kWh de la factura o alguna lectura para hacer la cuenta.</p>
         )}
+      </section>
+
+      <section style={{ marginTop: 16, breakBefore: hasPhotos ? "page" : "auto" }}>
+        <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Fotos de los medidores</h3>
+        {meters.map((meter) => (
+          <div key={meter.label} style={{ marginBottom: 12, breakInside: "avoid" }}>
+            <p style={{ margin: "0 0 6px", fontSize: 13, fontWeight: 650 }}>{meter.title}</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <SheetPhotos title={previousLabel} urls={meter.previousUrls} />
+              <SheetPhotos title={monthLabel} urls={meter.currentUrls} />
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <section style={{ marginTop: 8, breakBefore: hasInvoice ? "page" : "auto" }}>
+        <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Factura</h3>
+        {invoicePages.map((url, index) => (
+          <img key={`invoice-${index}`} src={url} alt={`Factura, hoja ${index + 1}`} style={{ display: "block", width: "100%", objectFit: "contain", background: "#fff", border: "1px solid #d4d4d8", borderRadius: 8, marginBottom: 8 }} />
+        ))}
+        {facturaUrls.map((url) => (
+          <img key={url} src={url} alt="Portada de la factura" style={{ display: "block", width: "100%", maxHeight: "125mm", objectFit: "contain", background: "#f4f4f5", border: "1px solid #d4d4d8", borderRadius: 8, marginBottom: 8 }} />
+        ))}
+        {!hasInvoice ? <p style={{ margin: 0, fontSize: 12, color: "#71717a" }}>Sin factura adjunta.</p> : null}
       </section>
       <p style={{ marginTop: 16, fontSize: 9, color: "#71717a" }}>SS Cuentas {APP_VERSION}</p>
     </article>
@@ -755,14 +996,3 @@ function SheetPhotos({ title, urls }: { title: string; urls: string[] }) {
   );
 }
 
-function MeterRow({ title, kwhValue, rate, amount }: { title: string; kwhValue: number; rate: number; amount: number }) {
-  return (
-    <div style={{ marginBottom: 8, border: "1px solid #e4e4e7", borderRadius: 8, padding: "8px 10px", breakInside: "avoid" }}>
-      <p style={{ margin: 0, fontSize: 13, fontWeight: 650 }}>{title}</p>
-      <p style={{ margin: "4px 0 0", fontSize: 12, color: "#3f3f46" }}>
-        {kwhText(kwhValue)} kWh × {priceText(rate)}
-      </p>
-      <p style={{ margin: "4px 0 0", fontSize: 16, fontWeight: 700 }}>{formatMoney(amount, "ARS")}</p>
-    </div>
-  );
-}

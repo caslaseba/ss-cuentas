@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // pdfjs se carga solo en el navegador, al dibujar la factura.
+  serverExternalPackages: ["pdfjs-dist"],
   // El server escucha en 0.0.0.0 y el navegador entra por 127.0.0.1.
   // Sin esto Next bloquea el websocket de desarrollo.
   allowedDevOrigins: ["127.0.0.1", "localhost"],

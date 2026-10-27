@@ -128,6 +128,7 @@ type FinanceContextValue = {
   saveMonthClose: (cardId: string, month: string, closingOn: string) => Promise<void>;
   edesurMonths: EdesurMonth[];
   saveEdesurMonth: (input: EdesurMonth) => Promise<void>;
+  saveEdesurMonths: (inputs: EdesurMonth[]) => Promise<void>;
   edesurPhotos: EdesurPhoto[];
   addEdesurPhoto: (month: string, label: EdesurPhotoLabel, file: File) => Promise<void>;
   removeEdesurPhoto: (id: string) => Promise<void>;
@@ -1390,8 +1391,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     await persistMonthCloses(supabase, user.id, next);
   };
 
-  const saveEdesurMonth: FinanceContextValue["saveEdesurMonth"] = async (input) => {
-    const next = withEdesurMonth(edesurMonths, input);
+  const saveEdesurMonths: FinanceContextValue["saveEdesurMonths"] = async (inputs) => {
+    let next = edesurMonths;
+    for (const input of inputs) next = withEdesurMonth(next, input);
     if (!supabase) {
       applySnap({ ...currentBooks(), edesurMonths: next });
       return;
@@ -1408,6 +1410,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     await persistEdesurMonths(supabase, user.id, next);
   };
 
+  const saveEdesurMonth: FinanceContextValue["saveEdesurMonth"] = async (input) => {
+    await saveEdesurMonths([input]);
+  };
+
   function rememberPhotos(next: EdesurPhoto[]) {
     setEdesurPhotos(next);
     const base = booksRef.current ?? readFinanceSnapshot();
@@ -1422,11 +1428,13 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     if (!/^\d{4}-\d{2}$/.test(month)) throw new Error("Mes inválido");
     const user = await currentUser();
     if (!user) throw new Error("Sin sesión");
-    const blob = await compressMeterPhoto(file, label === "factura" ? 2200 : 1600);
+    const isPdf = label === "factura" && (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"));
+    if (isPdf && file.size > 15 * 1024 * 1024) throw new Error("El PDF de la factura supera 15 MB.");
+    const blob = isPdf ? file : await compressMeterPhoto(file, label === "factura" ? 2200 : 1600);
     const id = crypto.randomUUID();
-    const path = `${user.id}/${month}/${id}.jpg`;
+    const path = `${user.id}/${month}/${id}.${isPdf ? "pdf" : "jpg"}`;
     const uploaded = await supabase.storage.from(EDESUR_METER_BUCKET).upload(path, blob, {
-      contentType: "image/jpeg",
+      contentType: isPdf ? "application/pdf" : "image/jpeg",
       upsert: false,
     });
     if (uploaded.error) throw new Error(uploaded.error.message);
@@ -1508,6 +1516,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         saveMonthClose,
         edesurMonths,
         saveEdesurMonth,
+        saveEdesurMonths,
         edesurPhotos,
         addEdesurPhoto,
         removeEdesurPhoto,
