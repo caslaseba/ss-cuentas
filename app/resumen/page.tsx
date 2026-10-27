@@ -22,7 +22,8 @@ import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
 import { shortMonth } from "@/lib/finance/close-cycle";
 import { planIdFromProjectedCuota } from "@/lib/finance/installment-drop";
-import { cashRecurringPaid, cursorFromMes, isProjectedTx } from "@/lib/finance/month-view";
+import { cardChoiceLabel } from "@/lib/finance/cards";
+import { cashRecurringPaid, cursorFromMes, isProjectedTx, spendOnCard } from "@/lib/finance/month-view";
 import { isEdesurName } from "@/lib/finance/edesur";
 import { monthIncomeLines, monthIncomeSplit } from "@/lib/finance/month-brief";
 import { BOOKS_START_ISO, cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
@@ -76,8 +77,8 @@ function ResumenInner() {
     salaryCardTo,
     cashMoves,
     settledCardIds,
-    visaMia,
-    visaPapa,
+    openCardTx,
+    visible,
     tarjetaAbierta,
     canGoPrev,
     salaryMonthFor,
@@ -109,11 +110,14 @@ function ResumenInner() {
     .sort((a, b) => a.name.localeCompare(b.name, "es"));
 
   function labelFor(card: CreditCard) {
-    if (mine && card.id === mine.id) return "Visa mía";
-    if (papa && card.id === papa.id) return "Extensión";
-    if (card.kind === "extension") return card.name;
-    return card.name;
+    return cardChoiceLabel(card);
   }
+
+  const openLines = visible.map((card) => ({
+    id: card.id,
+    label: cardChoiceLabel(card),
+    amount: spendOnCard(openCardTx, card.id, toArs),
+  }));
 
   function sourceOf(tx: Transaction) {
     if (tx.payment_method !== "tarjeta_credito") return { id: "plata", label: "Plata" };
@@ -160,7 +164,7 @@ function ResumenInner() {
       else {
         row.total += amount;
         if (tx.payment_method === "tarjeta_credito") {
-          const salary = salaryMonthFor(tx.occurred_on);
+          const salary = salaryMonthFor(tx.occurred_on, tx.credit_card_id);
           if (salary) {
             const key = monthKey(salary);
             row.cardBySalary.set(key, (row.cardBySalary.get(key) ?? 0) + amount);
@@ -758,11 +762,11 @@ function ResumenInner() {
           <div className="min-w-0">
             <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Sale</p>
             <p className="mt-1 flex items-baseline justify-between gap-2 text-[11px]">
-              <span>Las dos tarjetas</span>
+              <span>Tarjetas</span>
               <span className="font-semibold tabular-nums">{formatMoney(tarjetaAbierta, "ARS")}</span>
             </p>
             <p className="text-[10px] leading-tight text-muted-foreground">
-              Visa mía {formatMoney(visaMia, "ARS")} · Extensión {formatMoney(visaPapa, "ARS")}
+              {openLines.map((line) => `${line.label} ${formatMoney(line.amount, "ARS")}`).join(" · ")}
             </p>
             <p className="text-[10px] leading-tight text-muted-foreground">
               {tarjetaAbierta > 0 ? `Se abonan en ${nextName}.` : "Sin consumo en las tarjetas."}
@@ -1123,12 +1127,15 @@ function ResumenInner() {
                 <p className="text-[11px] font-semibold leading-tight tabular-nums">
                   {formatMoney(cardPaid ? cardPaidAmount : cardDue.total, "ARS")}
                 </p>
-                <p className="text-[9px] leading-tight text-muted-foreground">
-                  Visa mía {formatMoney(cardDue.visa, "ARS")}
-                </p>
-                <p className="text-[9px] leading-tight text-muted-foreground">
-                  Extensión {formatMoney(cardDue.extension, "ARS")}
-                </p>
+                {cardPaid
+                  ? null
+                  : cardDue.lines
+                      .filter((line) => line.amount > 0)
+                      .map((line) => (
+                        <p key={line.id} className="text-[9px] leading-tight text-muted-foreground">
+                          {line.label} {formatMoney(line.amount, "ARS")}
+                        </p>
+                      ))}
                 <p className="text-[9px] leading-tight text-muted-foreground">
                   {cardPaid ? "Pagada · descuenta este sueldo" : "Mes anterior · se paga este mes"}
                 </p>
@@ -1246,8 +1253,11 @@ function ResumenInner() {
             <DialogTitle>¿Pagaste las dos tarjetas?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Se descuentan {formatMoney(cardDue.total, "ARS")} del sueldo de este mes. Visa mía{" "}
-            {formatMoney(cardDue.visa, "ARS")} y Extensión {formatMoney(cardDue.extension, "ARS")}.
+            Se descuentan {formatMoney(cardDue.total, "ARS")} del sueldo de este mes.{" "}
+            {cardDue.lines
+              .filter((line) => line.amount > 0)
+              .map((line) => `${line.label} ${formatMoney(line.amount, "ARS")}`)
+              .join(" · ")}
           </p>
           <div className="mt-3">
             <Label>Fecha del pago</Label>
@@ -1335,7 +1345,6 @@ function ResumenInner() {
       outflows={reportOutflows}
       categories={categories}
       cards={cards}
-      papaId={papa?.id ?? null}
       toArs={toArs}
     />
     </>

@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CategorySuggest } from "@/components/entry/category-suggest";
 import { useEdition } from "@/components/providers/edition-provider";
 import { useFinance } from "@/components/providers/finance-provider";
-import { householdCards } from "@/lib/finance/cards";
+import { cardChoiceLabel, householdCards } from "@/lib/finance/cards";
 import { matchCategory } from "@/lib/finance/match";
 import { describeCategoryChoice } from "@/lib/finance/similar-category";
 import { parseAmountInput } from "@/lib/finance/amount";
@@ -330,7 +330,7 @@ export function QuickManual() {
             {visible.length === 0 ? <option value="">Visa ICBC</option> : null}
             {visible.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.kind === "extension" ? `${c.name} · extensión` : c.name}
+                {cardChoiceLabel(c)}
               </option>
             ))}
           </Select>

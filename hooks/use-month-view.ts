@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useFinance } from "@/components/providers/finance-provider";
-import { householdCards } from "@/lib/finance/cards";
+import { cardChoiceLabel, householdCards } from "@/lib/finance/cards";
 import {
   cycleSourceCard,
+  familyCardIds,
   getBillingCycle,
   inCycle,
   statementRefForMonth,
@@ -80,46 +81,61 @@ export function useMonthView(initial?: Date) {
     : papa
       ? cycleSourceCard(papa, cards)
       : null;
-  const liveCycle = cycleCard ? getBillingCycle(cycleCard, now) : null;
   const closingDayDefault = Math.min(28, Math.max(1, Number(cycleCard?.closing_day || 1)));
   const closes = finance.monthCloses;
+  const cycleSources = visible.filter((card) => card.kind === "principal");
 
   function closeOf(monthCursor: Date) {
     if (!cycleCard) return closeOnForMonth(monthCursor, closingDayDefault, [], "");
     return closeOnForMonth(monthCursor, closingDayDefault, closes, cycleCard.id);
   }
 
+  function closeFor(cardId: string | null | undefined) {
+    const own = cards.find((card) => card.id === cardId);
+    const source = own ? cycleSourceCard(own, cards) : cycleCard;
+    if (!source) return closeOf;
+    return (monthCursor: Date) => closeOnForMonth(monthCursor, source.closing_day, closes, source.id);
+  }
+
+  function inCardWindow(tx: Transaction, monthCursor: Date) {
+    const close = closeFor(tx.credit_card_id);
+    const start = close(shiftMonth(monthCursor, -1));
+    const end = close(monthCursor);
+    return Boolean(start && end && start <= end && tx.occurred_on >= start && tx.occurred_on <= end);
+  }
+
   function projectFor(monthCursor: Date) {
-    if (!cycleCard || !liveCycle) return [];
-    const ref = statementRefForMonth(cycleCard, monthCursor);
-    const cycle = getBillingCycle(cycleCard, ref);
-    const ahead =
-      (cycle.end.getFullYear() - liveCycle.end.getFullYear()) * 12 +
-      (cycle.end.getMonth() - liveCycle.end.getMonth());
-    if (ahead < 0) return [];
-    const existing = transactions.filter(
-      (t) => t.credit_card_id && cardIds.has(t.credit_card_id) && inCycle(t.occurred_on, cycle),
-    );
-    return projectedInstallmentTxs(installments, cycle, existing, transactions, cardIds, ahead);
+    const extras: Transaction[] = [];
+    for (const source of cycleSources) {
+      const live = getBillingCycle(source, now);
+      const ref = statementRefForMonth(source, monthCursor);
+      const cycle = getBillingCycle(source, ref);
+      const ahead =
+        (cycle.end.getFullYear() - live.end.getFullYear()) * 12 + (cycle.end.getMonth() - live.end.getMonth());
+      if (ahead < 0) continue;
+      const family = new Set(familyCardIds(source, cards));
+      const existing = transactions.filter(
+        (t) => t.credit_card_id && family.has(t.credit_card_id) && inCycle(t.occurred_on, cycle),
+      );
+      extras.push(...projectedInstallmentTxs(installments, cycle, existing, transactions, family, ahead));
+    }
+    return extras;
   }
 
   function pool(monthCursor: Date) {
-    const start = closeOf(shiftMonth(monthCursor, -1));
-    const end = closeOf(monthCursor);
-    const inPeriod = (iso: string) => Boolean(start && end && start <= end && iso >= start && iso <= end);
     const real = transactions.filter(
       (tx) =>
         tx.type === "egreso" &&
         tx.payment_method === "tarjeta_credito" &&
         tx.credit_card_id != null &&
         cardIds.has(tx.credit_card_id) &&
-        inPeriod(tx.occurred_on),
+        inCardWindow(tx, monthCursor),
     );
     return uniqueById([
       ...real,
-      ...projectFor(monthCursor).filter((tx) => inPeriod(tx.occurred_on)),
+      ...projectFor(monthCursor).filter((tx) => inCardWindow(tx, monthCursor)),
       ...projectedCardRecurringTxs(recurring, transactions, cards, monthCursor, profile?.id ?? "", mine?.id ?? null).filter(
-        (tx) => inPeriod(tx.occurred_on),
+        (tx) => inCardWindow(tx, monthCursor),
       ),
     ]);
   }
@@ -146,7 +162,7 @@ export function useMonthView(initial?: Date) {
   function hitsSalary(monthCursor: Date) {
     const key = monthKey(monthCursor);
     return cardUniverse.filter((tx) => {
-      const salary = salaryMonthOf(tx.occurred_on, closeOf);
+      const salary = salaryMonthOf(tx.occurred_on, closeFor(tx.credit_card_id));
       return Boolean(salary && monthKey(salary) === key);
     });
   }
@@ -217,11 +233,18 @@ export function useMonthView(initial?: Date) {
       (sum, tx) => {
         const amount = toArs(Number(tx.amount), tx.currency);
         if (papa && tx.credit_card_id === papa.id) sum.extension += amount;
-        else sum.visa += amount;
+        else if (!mine || tx.credit_card_id === mine.id) sum.visa += amount;
         sum.total += amount;
+        const line = sum.lines.find((item) => item.id === (tx.credit_card_id ?? ""));
+        if (line) line.amount += amount;
         return sum;
       },
-      { visa: 0, extension: 0, total: 0 },
+      {
+        visa: 0,
+        extension: 0,
+        total: 0,
+        lines: visible.map((card) => ({ id: card.id, label: cardChoiceLabel(card), amount: 0 })),
+      },
     );
 
   const nowMonth = monthKey(now);
@@ -317,7 +340,7 @@ export function useMonthView(initial?: Date) {
     cardHitsNow,
     cardHitsNext,
     cardHitsLater,
-    salaryMonthFor: (iso: string) => salaryMonthOf(iso, closeOf),
+    salaryMonthFor: (iso: string, cardId?: string | null) => salaryMonthOf(iso, closeFor(cardId)),
     typicalSalary,
     salarySamples: salaryEstimate.samples,
     quedaSiPagaVisa,

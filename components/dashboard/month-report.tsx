@@ -6,6 +6,7 @@ import { APP_VERSION } from "@/lib/version";
 import { observationOf } from "@/lib/finance/tx-notes";
 import { cleanConceptName } from "@/lib/finance/recurring";
 import { paymentMethodLabel } from "@/lib/finance/match";
+import { cardChoiceLabel } from "@/lib/finance/cards";
 import { isProjectedTx } from "@/lib/finance/month-view";
 import type { UnpaidCarry } from "@/lib/finance/unpaid-carry";
 import { groupCategory } from "@/lib/finance/style";
@@ -60,7 +61,6 @@ export function MonthReport({
   outflows,
   categories,
   cards,
-  papaId,
   toArs,
 }: {
   monthLabel: string;
@@ -79,7 +79,6 @@ export function MonthReport({
   outflows: Transaction[];
   categories: Category[];
   cards: CreditCard[];
-  papaId: string | null;
   toArs: (amount: number, currency: Transaction["currency"]) => number;
 }) {
   function ars(tx: Transaction) {
@@ -163,7 +162,7 @@ export function MonthReport({
       </p>
       <p style={{ margin: "0 0 8px", fontSize: 11 }}>{cardNote}</p>
       {cardGroups.map((group) => (
-        <GroupBlock key={group.name} group={group} cards={cards} papaId={papaId} tone="#6d28d9" card />
+        <GroupBlock key={group.name} group={group} cards={cards} tone="#6d28d9" card />
       ))}
       <p style={{ margin: "6px 0 0", fontSize: 11, display: "flex", justifyContent: "space-between" }}>
         <span>Consumos del período</span>
@@ -188,7 +187,7 @@ export function MonthReport({
         Servicios y cada salida en efectivo o transferencia. La transferencia de la tarjeta está en el bloque de arriba.
       </p>
       {outGroups.length ? (
-        outGroups.map((group) => <GroupBlock key={group.name} group={group} cards={cards} papaId={papaId} tone="#3730a3" />)
+        outGroups.map((group) => <GroupBlock key={group.name} group={group} cards={cards} tone="#3730a3" />)
       ) : (
         <p style={{ margin: 0, fontSize: 11, color: "#71717a" }}>Todavía no hay salidas cargadas en este mes.</p>
       )}
@@ -271,13 +270,11 @@ function Sum({ label, value }: { label: string; value: string }) {
 function GroupBlock({
   group,
   cards,
-  papaId,
   tone,
   card = false,
 }: {
   group: Group;
   cards: CreditCard[];
-  papaId: string | null;
   tone: string;
   card?: boolean;
 }) {
@@ -303,7 +300,7 @@ function GroupBlock({
       </div>
       {group.txs.map((tx) => {
         const own = cards.find((item) => item.id === tx.credit_card_id);
-        const method = card ? (own?.id === papaId ? own?.name || "Extensión" : "Tu Visa") : paymentMethodLabel(tx.payment_method);
+        const method = card ? (own ? cardChoiceLabel(own) : "Tarjeta") : paymentMethodLabel(tx.payment_method);
         const note = observationOf(tx.notes);
         const pending = isProjectedTx(tx);
         return (

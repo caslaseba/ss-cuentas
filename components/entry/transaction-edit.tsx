@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { householdCards } from "@/lib/finance/cards";
+import { cardChoiceLabel, householdCards } from "@/lib/finance/cards";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
 import { paymentMethodLabel, unifyPaymentMethod } from "@/lib/finance/match";
 import { findRecurringByName, isCardRecurring } from "@/lib/finance/recurring";
@@ -254,7 +254,7 @@ function EditForm({ tx, onDone }: { tx: Transaction; onDone: () => void }) {
           <Select className="mt-1.5" value={cardId} onChange={(e) => setCardId(e.target.value)}>
             {visible.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.kind === "extension" ? `${c.name} · extensión` : c.name}
+                {cardChoiceLabel(c)}
               </option>
             ))}
           </Select>

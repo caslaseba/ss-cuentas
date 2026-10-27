@@ -10,9 +10,9 @@ import { Button } from "@/components/ui/button";
 import { AmountInput } from "@/components/ui/amount-input";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { householdCards } from "@/lib/finance/cards";
+import { cardChoiceLabel, householdCards } from "@/lib/finance/cards";
 import { parseAmountInput } from "@/lib/finance/amount";
-import { isCardRecurring, withRecurringVia } from "@/lib/finance/recurring";
+import { isCardRecurring, recurringVia, withRecurringVia } from "@/lib/finance/recurring";
 import { describeCategoryChoice } from "@/lib/finance/similar-category";
 import { formatMoney } from "@/lib/utils";
 import type { RecurringPayment } from "@/lib/types";
@@ -33,10 +33,12 @@ export function RecurringPanel() {
       {recurring.length === 0 ? (
         <p className="text-sm text-muted-foreground">Todavía no hay fijos. Agregá luz, internet, Netflix…</p>
       ) : (
-        <p className="text-xs text-muted-foreground">Tocá uno para cambiar el monto, si se debita de la Visa, o borrarlo.</p>
+        <p className="text-xs text-muted-foreground">Tocá uno para cambiar el monto, de qué tarjeta se debita, o borrarlo.</p>
       )}
       {recurring.map((item) => {
         const categoryNameForItem = categories.find((c) => c.id === item.category_id)?.name;
+        const via = recurringVia(item);
+        const debitCard = visible.find((card) => card.id === via.cardId);
         return (
         <button
           key={item.id}
@@ -48,7 +50,9 @@ export function RecurringPanel() {
             {item.name}{" "}
             <span className="text-muted-foreground">
               {categoryNameForItem ? `· ${categoryNameForItem}` : ""}
-              {isCardRecurring(item) ? " · se debita con la Visa" : ` · día ${item.due_day}${item.is_paid ? " · pagado" : ""}`}
+              {isCardRecurring(item)
+                ? ` · se debita de ${debitCard ? cardChoiceLabel(debitCard) : "la tarjeta"}`
+                : ` · día ${item.due_day}${item.is_paid ? " · pagado" : ""}`}
             </span>
           </span>
           <span className="shrink-0 font-medium">{formatMoney(Number(item.amount), item.currency)}</span>
@@ -127,7 +131,7 @@ export function RecurringPanel() {
           <option value="plata">Lo pago yo</option>
           {visible.map((card) => (
             <option key={card.id} value={card.id}>
-              Se debita de {card.name}
+              Se debita de {cardChoiceLabel(card)}
             </option>
           ))}
         </Select>

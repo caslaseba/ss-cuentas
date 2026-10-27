@@ -3,6 +3,7 @@
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { useFinance } from "@/components/providers/finance-provider";
+import { cardChoiceLabel } from "@/lib/finance/cards";
 import { sumNoteForCharge } from "@/lib/finance/close-cycle";
 import { paymentMethodLabel } from "@/lib/finance/match";
 import { cardOfTx, isProjectedTx } from "@/lib/finance/month-view";
@@ -53,9 +54,9 @@ export function MovementRow({
         ? "Sobra"
         : "Entrada"
       : tx.payment_method === "tarjeta_credito"
-        ? card?.kind === "extension"
-          ? card.name
-          : "Tu Visa"
+        ? card
+          ? cardChoiceLabel(card)
+          : "Tarjeta"
         : paymentMethodLabel(tx.payment_method);
   const projected = isProjectedTx(tx);
   const obs = observationOf(tx.notes);

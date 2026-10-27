@@ -1,3 +1,4 @@
+import { isVisaMine } from "@/lib/finance/cards";
 import type { Category, CreditCard, PaymentMethod } from "@/lib/types";
 
 export const CATEGORY_KEYWORDS: { name: string; type: "ingreso" | "egreso"; words: string[] }[] = [
@@ -56,7 +57,7 @@ export function matchCard(cards: CreditCard[], nameHint?: string | null, kindHin
     const byKind = cards.find((c) => c.kind === kindHint);
     if (byKind) return byKind;
   }
-  return cards.find((c) => c.kind === "principal") ?? cards[0] ?? null;
+  return cards.find((c) => isVisaMine(c)) ?? cards.find((c) => c.kind === "principal") ?? cards[0] ?? null;
 }
 
 export function isCashMethod(method: PaymentMethod) {

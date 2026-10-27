@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { householdCards } from "@/lib/finance/cards";
+import { cardChoiceLabel, householdCards } from "@/lib/finance/cards";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
 import { baMonthKey, nextMonthKey, recurringVia, voidStartMonth, withRecurringVia } from "@/lib/finance/recurring";
 import { inCurrentMonth } from "@/lib/finance/wallet";
@@ -124,7 +124,7 @@ function EditForm({ item, asOfMonth, onDone }: { item: RecurringPayment; asOfMon
           <option value="plata">Lo pago yo (sale de tu plata)</option>
           {visible.map((c) => (
             <option key={c.id} value={c.id}>
-              Se debita de {c.name}
+              Se debita de {cardChoiceLabel(c)}
             </option>
           ))}
         </Select>

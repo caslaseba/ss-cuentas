@@ -19,7 +19,7 @@ import { useEdition } from "@/components/providers/edition-provider";
 import { useFinance } from "@/components/providers/finance-provider";
 import { useSpeechToText } from "@/hooks/use-speech";
 import { formatAmountFromNumber, parseAmountInput } from "@/lib/finance/amount";
-import { householdCards } from "@/lib/finance/cards";
+import { cardChoiceLabel, householdCards } from "@/lib/finance/cards";
 import { matchCard, matchCategory, categoryLabel } from "@/lib/finance/match";
 import { describeCategoryChoice } from "@/lib/finance/similar-category";
 import { parseVoiceCommand, parseVoiceCommandBeta } from "@/lib/parsers/voice-parser";
@@ -302,7 +302,7 @@ export function VoiceEntry({ compact = false }: { compact?: boolean }) {
                     <Select value={cardId} onChange={(e) => setCardId(e.target.value)}>
                       {visible.map((c) => (
                         <option key={c.id} value={c.id}>
-                          {c.kind === "extension" ? `${c.name} · extensión` : c.name}
+                          {cardChoiceLabel(c)}
                         </option>
                       ))}
                     </Select>
