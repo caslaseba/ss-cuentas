@@ -14,13 +14,15 @@ import { MonthReport } from "@/components/dashboard/month-report";
 import { MovementRow } from "@/components/dashboard/movement-row";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AmountInput } from "@/components/ui/amount-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { useDropInstallment } from "@/hooks/use-drop-installment";
 import { useEditGate } from "@/hooks/use-edit-gate";
 import { useMonthView } from "@/hooks/use-month-view";
-import { shortMonth } from "@/lib/finance/close-cycle";
+import { nextPeriodToConfirm, shortMonth } from "@/lib/finance/close-cycle";
+import { parseAmountInput } from "@/lib/finance/amount";
 import { planIdFromProjectedCuota } from "@/lib/finance/installment-drop";
 import { cardChoiceLabel } from "@/lib/finance/cards";
 import { cashRecurringPaid, cursorFromMes, isProjectedTx, spendOnCard } from "@/lib/finance/month-view";
@@ -28,7 +30,7 @@ import { isEdesurName } from "@/lib/finance/edesur";
 import { monthIncomeLines, monthIncomeSplit } from "@/lib/finance/month-brief";
 import { BOOKS_START_ISO, cardCoversRecurring, findRecurringByName, recurringVia, shownRecurring } from "@/lib/finance/recurring";
 import { categoryChipClass, groupCategory } from "@/lib/finance/style";
-import { cardBillNotes, isCardBillPayment, isUnpaidCarryPayment, unpaidCarryNote } from "@/lib/finance/tx-notes";
+import { cardBillNotes, isCardBillPayment, isUnpaidCarryPayment, nextPartialIndex, unpaidCarryNote, withCardPartial } from "@/lib/finance/tx-notes";
 import type { UnpaidPart } from "@/lib/finance/unpaid-carry";
 import { carryOverNote, inCurrentMonth, shiftMonth } from "@/lib/finance/wallet";
 import { cn, formatMoney, isoDate, monthKey } from "@/lib/utils";
@@ -71,7 +73,10 @@ function ResumenInner() {
     toArs,
     monthMoves,
     cardDue,
+    cardAccount,
     cardBillTx,
+    monthCloses,
+    saveMonthClose,
     salaryCardTx,
     salaryCardFrom,
     salaryCardTo,
@@ -101,6 +106,7 @@ function ResumenInner() {
   const [cardPayAsk, setCardPayAsk] = useState(false);
   const [carryPayAsk, setCarryPayAsk] = useState(false);
   const [payDate, setPayDate] = useState(isoDate(new Date()));
+  const [payAmount, setPayAmount] = useState("");
   const [payMethod, setPayMethod] = useState<PaymentMethod>("transferencia");
   const [unpayAsk, setUnpayAsk] = useState<RecurringPayment | null>(null);
 
@@ -450,7 +456,7 @@ function ResumenInner() {
   const cardPayments = transactions.filter(
     (tx) => tx.type === "egreso" && tx.payment_method !== "tarjeta_credito" && isCardBillPayment(tx.notes, viewedMonth),
   );
-  const cardPaid = cardDue.total <= 0 && cardPayments.length > 0;
+  const cardPaid = cardAccount.pending <= 0.004 && cardPayments.length > 0;
   const cardPaidAmount = cardPayments.reduce((sum, tx) => sum + Number(tx.amount), 0);
   const reportCardPaid = cardPayments.reduce((sum, tx) => sum + toArs(Number(tx.amount), tx.currency), 0);
   const reportOutflows = cashMoves.filter((tx) => tx.type === "egreso" && !isCardBillPayment(tx.notes, viewedMonth));
@@ -461,11 +467,13 @@ function ResumenInner() {
         ? "En los libros entra el consumo desde el 01/10 hasta el cierre. Noviembre es el primer mes con el resumen completo de esa tarjeta."
         : "";
   const cardPaymentNote =
-    reportCardPaid > 0 && cardDue.total <= 0
+    cardAccount.pending <= 0.004 && cardAccount.paid > 0
       ? "La transferencia de esta tarjeta ya salió de este sueldo."
-      : cardDue.total > 0
-        ? "Todavía no está toda transferida. Lo que falta se descuenta igual, porque se paga con este sueldo."
-        : "No hay consumos de tarjeta cargados para este sueldo.";
+      : cardAccount.paid > 0 && cardAccount.pending > 0.004
+        ? "Hay pagos parciales. Lo que falta queda pendiente y, si no se liquida este mes, entra como SALDO de mes anterior en la tarjeta del mes que viene."
+        : cardAccount.pending > 0.004
+          ? "Todavía no está transferida. Si no la liquidás este mes, el saldo entra en la tarjeta del mes que viene."
+          : "No hay consumos de tarjeta cargados para este sueldo.";
   const cardNote = [cardCoverage, cardPaymentNote].filter(Boolean).join(" ");
 
   async function confirmPay() {
@@ -491,21 +499,46 @@ function ResumenInner() {
     }
   }
 
-  async function confirmCardPay() {
-    if (cardDue.total <= 0 || cardPaid) return;
+  async function confirmCardPay(kind: "parcial" | "liquidar") {
+    const pending = cardAccount.pending;
+    if (pending <= 0.004 || cardPaid) return;
+    const entered = kind === "liquidar" ? pending : parseAmountInput(payAmount);
+    if (!Number.isFinite(entered) || entered <= 0) {
+      toast.error("Poné el monto del pago parcial.");
+      return;
+    }
+    if (entered > pending + 0.01) {
+      toast.error("Ese monto supera el saldo pendiente.");
+      return;
+    }
+    const amount = Math.min(entered, pending);
+    const liquidates = pending - amount <= 0.01;
+    if (kind === "parcial" && liquidates) {
+      toast.error("Ese monto liquida el saldo. Usá Liquidar saldo.");
+      return;
+    }
+    const index = nextPartialIndex(cardPayments.map((tx) => tx.notes));
+    const concept = liquidates ? (index === 1 ? "TARJETA TOTAL" : "LIQUIDACIÓN TARJETA") : `PAGO PARCIAL ${index}`;
     setCardPayAsk(false);
     try {
       await saveTransaction({
         type: "egreso",
-        amount: cardDue.total,
+        amount,
         currency: "ARS",
-        concept: "TARJETA TOTAL",
+        concept,
         payment_method: "transferencia",
         occurred_on: dateInViewedMonth(payDate || isoDate(new Date())),
-        notes: cardBillNotes(viewedMonth, cardBillTx.map((tx) => tx.id)),
+        notes: liquidates
+          ? cardBillNotes(viewedMonth, cardBillTx.map((tx) => tx.id))
+          : withCardPartial(cardBillNotes(viewedMonth, []), index),
         source: "manual",
       });
-      toast.success("Tarjeta pagada. Descuenta el sueldo de este mes.");
+      setPayAmount("");
+      toast.success(
+        liquidates
+          ? "Tarjeta liquidada. Descuenta el sueldo de este mes."
+          : `${concept} anotado. Queda pendiente ${formatMoney(pending - amount, "ARS")}.`,
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo marcar la tarjeta");
     }
@@ -551,15 +584,24 @@ function ResumenInner() {
       );
       return;
     }
+    const amount = Math.min(pickedPayableSum, cardAccount.pending);
+    if (amount <= 0.004) {
+      toast.error("Esa tarjeta ya está cubierta.");
+      return;
+    }
+    const index = nextPartialIndex(cardPayments.map((tx) => tx.notes));
     try {
       await saveTransaction({
         type: "egreso",
-        amount: pickedPayableSum,
+        amount,
         currency: "ARS",
-        concept: pickedPayable.length === 1 ? `TARJETA ${pickedPayable[0].concept}` : `TARJETA · ${pickedPayable.length} gastos`,
+        concept: amount >= cardAccount.pending - 0.01 ? "LIQUIDACIÓN TARJETA" : `PAGO PARCIAL ${index}`,
         payment_method: "transferencia",
         occurred_on: dateInViewedMonth(isoDate(new Date())),
-        notes: cardBillNotes(viewedMonth, pickedPayable.map((tx) => tx.id)),
+        notes:
+          amount >= cardAccount.pending - 0.01
+            ? cardBillNotes(viewedMonth, pickedPayable.map((tx) => tx.id))
+            : withCardPartial(cardBillNotes(viewedMonth, pickedPayable.map((tx) => tx.id)), index),
         source: "manual",
       });
       setPickedIds((current) => current.filter((id) => !pickedPayable.some((tx) => tx.id === id)));
@@ -780,7 +822,9 @@ function ResumenInner() {
                 <span className="block text-[10px] text-muted-foreground">
                   {cardPaid
                     ? "Ya descuenta el sueldo de este mes."
-                    : "Si no la cubrís, lo que falte entra como cuenta impaga el mes que viene."}
+                    : cardAccount.paid > 0
+                      ? "Hay pagos parciales. Lo que falta queda pendiente."
+                      : "Si no la liquidás este mes, lo que falte entra como SALDO de mes anterior."}
                 </span>
               </p>
             ) : null}
@@ -810,6 +854,88 @@ function ResumenInner() {
           </div>
         </div>
       </section>
+
+      {isCurrent
+        ? cards
+            .filter((card) => card.kind === "principal")
+            .map((card) => {
+              const ask = nextPeriodToConfirm(new Date(), card.closing_day, monthCloses, card.id);
+              if (!ask) return null;
+              return (
+                <form
+                  key={card.id}
+                  className="space-y-2 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const input = event.currentTarget.elements.namedItem("cierre") as HTMLInputElement | null;
+                    const closingOn = input?.value ?? "";
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(closingOn)) {
+                      toast.error("Elegí el día en que cierra el próximo período.");
+                      return;
+                    }
+                    guard(() => {
+                      void saveMonthClose(card.id, ask.nextMonth, closingOn)
+                        .then(() => toast.success("Próximo período guardado"))
+                        .catch((err) => toast.error(err instanceof Error ? err.message : "No se pudo guardar el cierre"));
+                    }, false);
+                  }}
+                >
+                  <p className="text-[11px] font-medium text-violet-950 dark:text-violet-100">
+                    {cardChoiceLabel(card)} cerró el {format(parseISO(ask.closedOn), "d 'de' MMMM", { locale: es })}. ¿Hasta
+                    qué día cierra el próximo período?
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Input className="h-8" type="date" name="cierre" defaultValue={ask.suggestedOn} required />
+                    <Button type="submit" size="sm" className="h-8 shrink-0 px-2 text-xs">
+                      Guardar
+                    </Button>
+                  </div>
+                </form>
+              );
+            })
+        : null}
+
+      {cardAccount.charges > 0.004 || cardAccount.saldoAnterior > 0.004 || cardAccount.paid > 0.004 ? (
+        <section className="rounded-md border border-violet-500/30 px-2 py-2">
+          <h2 className="text-xs font-medium capitalize">
+            Resumen de {format(shiftMonth(cursor, -1), "MMMM yyyy", { locale: es })}
+          </h2>
+          <p className="text-[10px] text-muted-foreground">
+            Período {format(parseISO(salaryCardFrom), "dd/MM/yyyy", { locale: es })} →{" "}
+            {format(parseISO(salaryCardTo), "dd/MM/yyyy", { locale: es })}. Se paga con este sueldo.
+          </p>
+          <ul className="mt-1 max-h-40 space-y-0.5 overflow-auto">
+            {salaryCardTx
+              .filter((tx) => tx.type === "egreso")
+              .map((tx) => (
+                <li key={tx.id} className="flex items-baseline justify-between gap-2 text-[10px]">
+                  <span className="min-w-0 truncate">
+                    {format(parseISO(tx.occurred_on), "dd/MM", { locale: es })} {tx.concept}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{formatMoney(toArs(Number(tx.amount), tx.currency), "ARS")}</span>
+                </li>
+              ))}
+          </ul>
+          {cardAccount.saldoAnterior > 0.004 ? (
+            <p className="mt-1 flex items-baseline justify-between gap-2 text-[11px]">
+              <span>SALDO de mes anterior</span>
+              <span className="font-semibold tabular-nums">{formatMoney(cardAccount.saldoAnterior, "ARS")}</span>
+            </p>
+          ) : null}
+          {cardPayments.map((tx) => (
+            <p key={tx.id} className="flex items-baseline justify-between gap-2 text-[11px] text-muted-foreground">
+              <span>{tx.concept}</span>
+              <span className="tabular-nums">− {formatMoney(Number(tx.amount), "ARS")}</span>
+            </p>
+          ))}
+          <p className="mt-1 flex items-baseline justify-between gap-2 text-[11px]">
+            <span>{cardAccount.pending > 0.004 ? "Pendiente" : "Liquidada"}</span>
+            <span className="font-semibold tabular-nums">
+              {formatMoney(cardAccount.pending > 0.004 ? cardAccount.pending : cardAccount.paid, "ARS")}
+            </span>
+          </p>
+        </section>
+      ) : null}
 
       {isPast && !unlocked ? (
         <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
@@ -1125,8 +1251,13 @@ function ResumenInner() {
               >
                 <p className="truncate text-[11px] font-medium leading-tight">TARJETA TOTAL</p>
                 <p className="text-[11px] font-semibold leading-tight tabular-nums">
-                  {formatMoney(cardPaid ? cardPaidAmount : cardDue.total, "ARS")}
+                  {formatMoney(cardPaid ? cardPaidAmount : cardAccount.pending, "ARS")}
                 </p>
+                {cardAccount.saldoAnterior > 0.004 ? (
+                  <p className="text-[9px] leading-tight text-muted-foreground">
+                    SALDO de mes anterior {formatMoney(cardAccount.saldoAnterior, "ARS")}
+                  </p>
+                ) : null}
                 {cardPaid
                   ? null
                   : cardDue.lines
@@ -1136,6 +1267,11 @@ function ResumenInner() {
                           {line.label} {formatMoney(line.amount, "ARS")}
                         </p>
                       ))}
+                {cardPayments.map((tx) => (
+                  <p key={tx.id} className="text-[9px] leading-tight text-muted-foreground">
+                    {tx.concept} {formatMoney(Number(tx.amount), "ARS")}
+                  </p>
+                ))}
                 <p className="text-[9px] leading-tight text-muted-foreground">
                   {cardPaid ? "Pagada · descuenta este sueldo" : "Mes anterior · se paga este mes"}
                 </p>
@@ -1150,7 +1286,7 @@ function ResumenInner() {
                       }, isPast)
                     }
                   >
-                    Pagué
+                    {cardAccount.paid > 0 ? "Otro pago" : "Pagar"}
                   </Button>
                 ) : null}
                 {cardPaid ? (
@@ -1250,24 +1386,35 @@ function ResumenInner() {
       <Dialog open={cardPayAsk} onOpenChange={setCardPayAsk}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>¿Pagaste las dos tarjetas?</DialogTitle>
+            <DialogTitle>Pago de la tarjeta</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Se descuentan {formatMoney(cardDue.total, "ARS")} del sueldo de este mes.{" "}
-            {cardDue.lines
-              .filter((line) => line.amount > 0)
-              .map((line) => `${line.label} ${formatMoney(line.amount, "ARS")}`)
-              .join(" · ")}
+            Saldo pendiente {formatMoney(cardAccount.pending, "ARS")}. Un pago parcial queda anotado y el resto sigue
+            pendiente. Si este mes no se liquida, entra como SALDO de mes anterior en la tarjeta del mes que viene.
           </p>
-          <div className="mt-3">
-            <Label>Fecha del pago</Label>
-            <Input className="mt-1.5" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+          {cardAccount.saldoAnterior > 0.004 ? (
+            <p className="text-xs text-muted-foreground">
+              Incluye SALDO de mes anterior {formatMoney(cardAccount.saldoAnterior, "ARS")}.
+            </p>
+          ) : null}
+          <div className="mt-3 space-y-2">
+            <div>
+              <Label>Monto del pago parcial</Label>
+              <AmountInput className="mt-1.5" value={payAmount} onChange={setPayAmount} placeholder="40000" />
+            </div>
+            <div>
+              <Label>Fecha del pago</Label>
+              <Input className="mt-1.5" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+            </div>
           </div>
-          <div className="mt-4 flex gap-2">
-            <Button className="flex-1" onClick={() => void confirmCardPay()}>
-              Sí, pagué
+          <div className="mt-4 flex flex-col gap-2">
+            <Button onClick={() => void confirmCardPay("parcial")}>
+              Pago parcial {nextPartialIndex(cardPayments.map((tx) => tx.notes))}
             </Button>
-            <Button className="flex-1" variant="outline" onClick={() => setCardPayAsk(false)}>
+            <Button variant="outline" onClick={() => void confirmCardPay("liquidar")}>
+              Liquidar saldo
+            </Button>
+            <Button variant="outline" onClick={() => setCardPayAsk(false)}>
               Cancelar
             </Button>
           </div>
@@ -1340,7 +1487,8 @@ function ResumenInner() {
       cardNote={cardNote}
       cardCharges={salaryCardTx.filter((tx) => tx.type === "egreso")}
       cardPaidAmount={reportCardPaid}
-      cardUnpaid={cardDue.total}
+      cardUnpaid={cardAccount.pending}
+      saldoAnterior={cardAccount.saldoAnterior}
       unpaidCarry={unpaidCarry}
       outflows={reportOutflows}
       categories={categories}

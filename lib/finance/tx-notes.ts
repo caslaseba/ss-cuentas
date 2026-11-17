@@ -77,6 +77,30 @@ export function isCardBillPayment(notes: string | null | undefined, month?: stri
   return month ? found === month : true;
 }
 
+const PARTIAL_PREFIX = "tarjeta-parcial:";
+
+export function cardPartialMark(index: number) {
+  return `${PARTIAL_PREFIX}${index}`;
+}
+
+export function cardPartialIndex(notes: string | null | undefined) {
+  const line = notesLines(notes).find((item) => item.startsWith(PARTIAL_PREFIX));
+  if (!line) return null;
+  const index = Number(line.slice(PARTIAL_PREFIX.length));
+  return Number.isInteger(index) && index > 0 ? index : null;
+}
+
+export function withCardPartial(notes: string | null | undefined, index: number) {
+  const extra = notesLines(notes).filter((item) => !item.startsWith(PARTIAL_PREFIX));
+  extra.push(cardPartialMark(index));
+  return extra.join("\n");
+}
+
+export function nextPartialIndex(notesList: (string | null | undefined)[]) {
+  const used = notesList.map((notes) => cardPartialIndex(notes)).filter((index): index is number => index != null);
+  return used.length ? Math.max(...used) + 1 : 1;
+}
+
 export function unpaidCarryNote(month: string) {
   return `impaga:${month}`;
 }

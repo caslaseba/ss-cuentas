@@ -109,6 +109,43 @@ export function describedPeriod(month: Date, closeOf: (month: Date) => string) {
   return { start, end, rawStart, rawEnd };
 }
 
+export function chargePlacement(date: string, closeOf: (month: Date) => string) {
+  const window = windowMonthOf(date, closeOf);
+  if (!window) return null;
+  const salary = shiftMonthStart(window, 1);
+  const period = describedPeriod(window, closeOf);
+  const closeOfPurchase = closeOf(monthFromIso(date));
+  const afterClose = Boolean(closeOfPurchase && date > closeOfPurchase);
+  return { window, salary, period, afterClose };
+}
+
+/** El cierre de este mes ya pasó y el período siguiente todavía no fue confirmado. */
+export function nextPeriodToConfirm(
+  today: Date,
+  closingDay: number,
+  closes: CardMonthClose[],
+  cardId: string,
+) {
+  const todayIso = isoDate(today);
+  const origin = monthStart(today);
+  let last: { month: Date; on: string } | null = null;
+  for (let delta = -18; delta <= 0; delta += 1) {
+    const month = shiftMonthStart(origin, delta);
+    const on = closeOnForMonth(month, closingDay, closes, cardId);
+    if (on && on <= todayIso) last = { month, on };
+  }
+  if (!last) return null;
+  const next = shiftMonthStart(last.month, 1);
+  const nextKey = monthKey(next);
+  if (closes.some((item) => item.cardId === cardId && item.month === nextKey)) return null;
+  return {
+    closedOn: last.on,
+    closedMonth: monthKey(last.month),
+    nextMonth: nextKey,
+    suggestedOn: defaultCloseOn(next, closingDay),
+  };
+}
+
 export function impactNote(date: string, closeOf: (month: Date) => string) {
   const salary = salaryMonthOf(date, closeOf);
   if (!salary) return null;

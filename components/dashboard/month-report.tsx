@@ -57,6 +57,7 @@ export function MonthReport({
   cardCharges,
   cardPaidAmount,
   cardUnpaid,
+  saldoAnterior = 0,
   unpaidCarry,
   outflows,
   categories,
@@ -75,6 +76,7 @@ export function MonthReport({
   cardCharges: Transaction[];
   cardPaidAmount: number;
   cardUnpaid: number;
+  saldoAnterior?: number;
   unpaidCarry: UnpaidCarry;
   outflows: Transaction[];
   categories: Category[];
@@ -106,7 +108,8 @@ export function MonthReport({
 
   const entra = (estimated ? sueldo + otros : incomeLines.reduce((sum, line) => sum + line.amount, 0)) || 0;
   const chargesSum = cardCharges.reduce((sum, tx) => sum + ars(tx), 0);
-  const tarjeta = cardPaidAmount > 0 || cardUnpaid > 0 ? cardPaidAmount + cardUnpaid : chargesSum;
+  const obligacion = cardPaidAmount > 0 || cardUnpaid > 0 ? cardPaidAmount + cardUnpaid : chargesSum + saldoAnterior;
+  const tarjeta = cardPaidAmount;
   const cardGroups = groupsOf(cardCharges);
   const outGroups = groupsOf(outflows);
   const salidas = outflows.reduce((sum, tx) => sum + ars(tx), 0);
@@ -129,7 +132,7 @@ export function MonthReport({
 
       <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6, marginBottom: 14 }}>
         <Total label="Entra" value={pesos(entra)} color="#047857" />
-        <Total label="Tarjeta anterior" value={pesos(tarjeta)} color="#6d28d9" />
+        <Total label="Tarjeta anterior" value={pesos(obligacion)} color="#6d28d9" />
         <Total label="Salidas del mes" value={pesos(salidas)} color="#3730a3" />
         <Total label={estimated ? "Te quedaría" : "Te queda"} value={pesos(queda)} color="#047857" />
       </section>
@@ -168,6 +171,12 @@ export function MonthReport({
         <span>Consumos del período</span>
         <strong>{pesos(chargesSum)}</strong>
       </p>
+      {saldoAnterior > 0 ? (
+        <p style={{ margin: "2px 0 0", fontSize: 11, display: "flex", justifyContent: "space-between" }}>
+          <span>SALDO de mes anterior</span>
+          <strong>{pesos(saldoAnterior)}</strong>
+        </p>
+      ) : null}
       {cardPaidAmount > 0 ? (
         <p style={{ margin: "2px 0 0", fontSize: 11, display: "flex", justifyContent: "space-between" }}>
           <span>Ya transferido</span>
@@ -176,11 +185,11 @@ export function MonthReport({
       ) : null}
       {cardUnpaid > 0 ? (
         <p style={{ margin: "2px 0 0", fontSize: 11, display: "flex", justifyContent: "space-between" }}>
-          <span>Todavía sin transferir</span>
+          <span>Pendiente, pasa al mes que viene</span>
           <strong>{pesos(cardUnpaid)}</strong>
         </p>
       ) : null}
-      <Sum label="Descuenta este sueldo" value={pesos(tarjeta)} />
+      <Sum label="Sale de este sueldo" value={pesos(tarjeta)} />
 
       <h2 style={{ fontSize: 14, margin: "14px 0 4px", color: "#3730a3" }}>Salidas de este mes</h2>
       <p style={{ margin: "0 0 8px", fontSize: 11, color: "#3f3f46" }}>
@@ -216,9 +225,15 @@ export function MonthReport({
           <span>{pesos(entra)}</span>
         </p>
         <p style={{ margin: "2px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
-          <span>Tarjeta del período anterior</span>
+          <span>Tarjeta pagada</span>
           <span>− {pesos(tarjeta)}</span>
         </p>
+        {cardUnpaid > 0 ? (
+          <p style={{ margin: "2px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between", color: "#6d28d9" }}>
+            <span>Pendiente, no descuenta este sueldo</span>
+            <span>{pesos(cardUnpaid)}</span>
+          </p>
+        ) : null}
         <p style={{ margin: "2px 0 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
           <span>Salidas de este mes</span>
           <span>− {pesos(salidas)}</span>

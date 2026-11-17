@@ -11,17 +11,35 @@ import { CategorySuggest } from "@/components/entry/category-suggest";
 import { useEdition } from "@/components/providers/edition-provider";
 import { useFinance } from "@/components/providers/finance-provider";
 import { cardChoiceLabel, householdCards } from "@/lib/finance/cards";
+import { chargePlacement, closeOnForMonth, shortMonth } from "@/lib/finance/close-cycle";
 import { matchCategory } from "@/lib/finance/match";
 import { describeCategoryChoice } from "@/lib/finance/similar-category";
 import { parseAmountInput } from "@/lib/finance/amount";
 import { withObservation } from "@/lib/finance/tx-notes";
-import { addMonths, usdToLocal } from "@/lib/finance/settlement";
+import { addMonths, cycleSourceCard, usdToLocal } from "@/lib/finance/settlement";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { formatMoney, isoDate } from "@/lib/utils";
 import type { CurrencyCode, PaymentMethod } from "@/lib/types";
 
 type Mode = "ingreso" | "transferencia" | "tarjeta" | "servicio";
+
+type DraftLine = {
+  key: string;
+  mode: Mode;
+  concept: string;
+  amount: string;
+  currency: CurrencyCode;
+  categoryId: string;
+  categoryName: string;
+  cardId: string;
+  enCuotas: boolean;
+  cuotas: string;
+  currentCuota: string;
+  asFixed: boolean;
+  observation: string;
+  occurredOn: string;
+};
 
 export function QuickManual() {
   const {
@@ -35,6 +53,7 @@ export function QuickManual() {
     linkCardService,
     saveRecurring,
     saveCategory,
+    monthCloses,
   } = useFinance();
   const { beta } = useEdition();
   const { mine, visible } = householdCards(cards, transactions);
@@ -52,6 +71,7 @@ export function QuickManual() {
   const [asFixed, setAsFixed] = useState(false);
   const [observation, setObservation] = useState("");
   const [occurredOn, setOccurredOn] = useState(isoDate(new Date()));
+  const [drafts, setDrafts] = useState<DraftLine[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -98,130 +118,177 @@ export function QuickManual() {
     setTimeout(go, 50);
   }
 
+  function lineFromForm(): DraftLine | null {
+    if (!amount.trim()) return null;
+    const n = parseAmountInput(amount);
+    if (!Number.isFinite(n) || n < 0) {
+      toast.error("El monto no puede ser negativo.");
+      return null;
+    }
+    return {
+      key: `${occurredOn}-${Date.now()}-${concept}`,
+      mode,
+      concept,
+      amount,
+      currency,
+      categoryId,
+      categoryName,
+      cardId,
+      enCuotas,
+      cuotas,
+      currentCuota,
+      asFixed,
+      observation,
+      occurredOn,
+    };
+  }
+
+  function clearItem() {
+    setConcept("");
+    setAmount("");
+    setCategoryId("");
+    setCategoryName("");
+    setEnCuotas(false);
+    setCuotas("");
+    setCurrentCuota("1");
+    setAsFixed(false);
+    setObservation("");
+  }
+
+  function addDraft() {
+    const line = lineFromForm();
+    if (!line) {
+      if (!amount.trim()) toast.error("Poné el monto. Puede ser 0.");
+      return;
+    }
+    setDrafts((list) => [...list, line]);
+    clearItem();
+    focusConcept();
+  }
+
+  async function persistLine(line: DraftLine, quiet: boolean) {
+    const n = parseAmountInput(line.amount);
+    const type = line.mode === "ingreso" ? "ingreso" : "egreso";
+    let categoryRecord =
+      categories.find((c) => c.id === line.categoryId) ??
+      matchCategory(categories, type, line.concept.trim() || (type === "ingreso" ? "Ingreso" : "Gasto"));
+    if (beta && line.categoryName.trim()) {
+      const choice = describeCategoryChoice(categories, type, line.categoryName);
+      if (choice.kind === "exact" || choice.kind === "similar") {
+        categoryRecord = choice.category;
+        if (choice.kind === "similar") toast.message(`Ya existe “${choice.category.name}”. La uso en lugar de crear otra.`);
+      } else if (choice.kind === "create") {
+        categoryRecord = await saveCategory({ name: choice.name, type });
+        toast.success(`Categoría nueva: ${categoryRecord.name}`);
+      }
+    } else if (beta && line.mode === "servicio" && line.concept.trim()) {
+      const choice = describeCategoryChoice(categories, "egreso", line.concept);
+      if (choice.kind === "exact" || choice.kind === "similar") {
+        categoryRecord = choice.category;
+        if (choice.kind === "similar") toast.message(`Ya existe “${choice.category.name}”. La uso en lugar de crear otra.`);
+      } else if (choice.kind === "create") {
+        categoryRecord = await saveCategory({ name: choice.name, type: "egreso" });
+        toast.success(`Categoría nueva: ${categoryRecord.name}`);
+      }
+    }
+    const cat = categoryRecord;
+    const label = line.concept.trim() || cat?.name || (type === "ingreso" ? "Ingreso" : "Gasto");
+    const method: PaymentMethod = line.mode === "tarjeta" ? "tarjeta_credito" : "transferencia";
+    let resolvedCard = line.cardId;
+    if (line.mode === "tarjeta" && !resolvedCard) {
+      const created = await saveCard({ name: "Visa ICBC", kind: "principal", closing_day: 1, due_day: 14 });
+      resolvedCard = created.id;
+    }
+    const txCurrency: CurrencyCode =
+      line.mode === "tarjeta" || (beta && (line.mode === "ingreso" || line.mode === "servicio")) ? line.currency : "ARS";
+    const notes = withObservation(null, line.observation);
+    const when = line.occurredOn || isoDate(new Date());
+    const lineCuotas = line.enCuotas ? Number(line.cuotas) : 0;
+    const lineCurrent = Math.min(Math.max(Number(line.currentCuota) || 1, 1), Math.max(lineCuotas, 1));
+    const lineDate = new Date(`${when}T12:00:00`);
+    if (line.mode === "servicio") {
+      await saveRecurring({
+        name: label,
+        amount: n,
+        currency: txCurrency,
+        frequency: "mensual",
+        due_day: Math.min(28, lineDate.getDate() || 1),
+        category_id: cat?.id ?? null,
+        notes,
+      });
+      if (!quiet) toast.success("Mensual guardado");
+      return;
+    }
+    if (line.mode === "tarjeta" && lineCuotas >= 2 && resolvedCard) {
+      await saveInstallmentPurchase({
+        concept: label,
+        installmentAmount: n,
+        count: lineCuotas,
+        current: lineCurrent,
+        currency: txCurrency,
+        credit_card_id: resolvedCard,
+        category_id: cat?.id ?? null,
+        occurred_on: when,
+        source: "manual",
+        notes,
+      });
+      if (!quiet) toast.success(`Cuota ${lineCurrent}/${lineCuotas} en la tarjeta`);
+    } else {
+      await saveTransaction({
+        type,
+        amount: n,
+        currency: txCurrency,
+        concept: label,
+        payment_method: method,
+        category_id: cat?.id ?? null,
+        credit_card_id: line.mode === "tarjeta" ? resolvedCard : null,
+        occurred_on: when,
+        source: "manual",
+        notes,
+      });
+      if (!quiet) {
+        toast.success(line.mode === "ingreso" ? "Ingreso sumado" : line.mode === "tarjeta" ? "Sumado a la tarjeta" : "Descontado");
+      }
+    }
+    if (line.mode === "tarjeta" && line.asFixed && lineCuotas < 2 && resolvedCard) {
+      await linkCardService({
+        name: label,
+        amount: n,
+        currency: txCurrency,
+        credit_card_id: resolvedCard,
+        category_id: cat?.id ?? null,
+      });
+      toast.message("Quedó como mensual: se debita de la tarjeta y sigue en su categoría.");
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const n = parsedAmount;
-    if (!amount.trim()) {
+    const pending = [...drafts];
+    if (amount.trim()) {
+      const line = lineFromForm();
+      if (!line) return;
+      pending.push(line);
+    } else if (!pending.length) {
       toast.error("Poné el monto. Puede ser 0.");
       return;
     }
-    if (!Number.isFinite(n) || n < 0) {
-      toast.error("El monto no puede ser negativo.");
-      return;
-    }
     setBusy(true);
+    const quiet = pending.length > 1;
+    let saved = 0;
     try {
-      const type = mode === "ingreso" ? "ingreso" : "egreso";
-      let categoryRecord =
-        categories.find((c) => c.id === categoryId) ??
-        matchCategory(categories, type, concept.trim() || (type === "ingreso" ? "Ingreso" : "Gasto"));
-      if (beta && categoryName.trim()) {
-        const choice = describeCategoryChoice(categories, type, categoryName);
-        if (choice.kind === "exact" || choice.kind === "similar") {
-          categoryRecord = choice.category;
-          if (choice.kind === "similar") {
-            toast.message(`Ya existe “${choice.category.name}”. La uso en lugar de crear otra.`);
-          }
-        } else if (choice.kind === "create") {
-          categoryRecord = await saveCategory({ name: choice.name, type });
-          toast.success(`Categoría nueva: ${categoryRecord.name}`);
-        }
-      } else if (beta && mode === "servicio" && concept.trim()) {
-        const choice = describeCategoryChoice(categories, "egreso", concept);
-        if (choice.kind === "exact" || choice.kind === "similar") {
-          categoryRecord = choice.category;
-          if (choice.kind === "similar") {
-            toast.message(`Ya existe “${choice.category.name}”. La uso en lugar de crear otra.`);
-          }
-        } else if (choice.kind === "create") {
-          categoryRecord = await saveCategory({ name: choice.name, type: "egreso" });
-          toast.success(`Categoría nueva: ${categoryRecord.name}`);
-        }
+      for (const line of pending) {
+        await persistLine(line, quiet);
+        saved += 1;
       }
-      const cat = categoryRecord;
-      const label = concept.trim() || cat?.name || (type === "ingreso" ? "Ingreso" : "Gasto");
-      const method: PaymentMethod = mode === "tarjeta" ? "tarjeta_credito" : "transferencia";
-      let resolvedCard = cardId;
-      if (mode === "tarjeta" && !resolvedCard) {
-        const created = await saveCard({ name: "Visa ICBC", kind: "principal", closing_day: 1, due_day: 14 });
-        resolvedCard = created.id;
-      }
-      const txCurrency: CurrencyCode =
-        mode === "tarjeta" || (beta && (mode === "ingreso" || mode === "servicio")) ? currency : "ARS";
-      const notes = withObservation(null, observation);
-      if (mode === "servicio") {
-        await saveRecurring({
-          name: label,
-          amount: n,
-          currency: txCurrency,
-          frequency: "mensual",
-          due_day: Math.min(28, chargeDate.getDate() || 1),
-          category_id: cat?.id ?? null,
-          notes: withObservation(null, observation),
-        });
-        toast.success("Mensual guardado");
-        setConcept("");
-        setAmount("");
-        setCategoryId("");
-        setCategoryName("");
-        setObservation("");
-        setOccurredOn(isoDate(new Date()));
-        focusConcept();
-        return;
-      }
-      if (mode === "tarjeta" && cuotaN >= 2 && resolvedCard) {
-        await saveInstallmentPurchase({
-          concept: label,
-          installmentAmount: n,
-          count: cuotaN,
-          current: currentN,
-          currency: txCurrency,
-          credit_card_id: resolvedCard,
-          category_id: cat?.id ?? null,
-          occurred_on: occurredOn || isoDate(new Date()),
-          source: "manual",
-          notes,
-        });
-        toast.success(`Cuota ${currentN}/${cuotaN} en la tarjeta`);
-      } else {
-        await saveTransaction({
-          type,
-          amount: n,
-          currency: txCurrency,
-          concept: label,
-          payment_method: method,
-          category_id: cat?.id ?? null,
-          credit_card_id: mode === "tarjeta" ? resolvedCard : null,
-          occurred_on: occurredOn || isoDate(new Date()),
-          source: "manual",
-          notes,
-        });
-        toast.success(
-          mode === "ingreso" ? "Ingreso sumado" : mode === "tarjeta" ? "Sumado a la tarjeta" : "Descontado",
-        );
-      }
-      if (mode === "tarjeta" && asFixed && cuotaN < 2 && resolvedCard) {
-        await linkCardService({
-          name: label,
-          amount: n,
-          currency: txCurrency,
-          credit_card_id: resolvedCard,
-          category_id: cat?.id ?? null,
-        });
-        toast.message("Quedó como mensual: se debita de la tarjeta y sigue en su categoría.");
-      }
-      setConcept("");
-      setAmount("");
-      setCategoryId("");
-      setCategoryName("");
-      setEnCuotas(false);
-      setCuotas("");
-      setCurrentCuota("1");
-      setAsFixed(false);
-      setObservation("");
+      if (quiet) toast.success(`${saved} movimientos del mismo día`);
+      setDrafts([]);
+      clearItem();
       setOccurredOn(isoDate(new Date()));
       focusConcept();
     } catch (err) {
+      setDrafts(pending.slice(saved));
+      if (saved > 0) clearItem();
       toast.error(err instanceof Error ? err.message : "No se pudo guardar");
     } finally {
       setBusy(false);
@@ -229,6 +296,13 @@ export function QuickManual() {
   }
 
   const pickedCard = visible.find((c) => c.id === cardId);
+  const placement = (() => {
+    if (mode !== "tarjeta" || !pickedCard) return null;
+    const source = cycleSourceCard(pickedCard, cards);
+    const closeOf = (month: Date) => closeOnForMonth(month, source.closing_day, monthCloses, source.id);
+    return chargePlacement(occurredOn, closeOf);
+  })();
+  const readyCount = drafts.length + (amount.trim() ? 1 : 0);
 
   return (
     <form className="space-y-3" onSubmit={(e) => void submit(e)}>
@@ -274,8 +348,15 @@ export function QuickManual() {
       <p className="text-[11px] text-muted-foreground">
         {mode === "servicio"
           ? "Figura hoy. El día de esta fecha es el vencimiento de cada mes. La categoría no cambia."
-          : "Figura hoy. Cambiala si el gasto o el ingreso fue otro día."}
+          : "Figura hoy. Cambiala si el gasto o el ingreso fue otro día. Podés sumar varios del mismo día antes de guardar."}
       </p>
+      {placement ? (
+        <p className="text-[11px] leading-snug text-violet-800 dark:text-violet-200">
+          {placement.afterClose
+            ? `Ya pasó el cierre. Aparece en ${shortMonth(placement.window)} y descuenta en ${shortMonth(placement.salary)}.`
+            : `Entra en el período ${placement.period.start.slice(8)}/${placement.period.start.slice(5, 7)} → ${placement.period.end.slice(8)}/${placement.period.end.slice(5, 7)}. Descuenta en ${shortMonth(placement.salary)}.`}
+        </p>
+      ) : null}
       <Input
         ref={conceptRef}
         value={concept}
@@ -402,9 +483,36 @@ export function QuickManual() {
         placeholder="Observación (opcional)"
         className="min-h-16"
       />
-      <Button className="h-11 w-full" disabled={busy} type="submit">
-        {busy ? "Guardando…" : "Listo"}
-      </Button>
+      {drafts.length > 0 ? (
+        <ul className="space-y-1 rounded-xl border border-border p-2">
+          {drafts.map((line) => (
+            <li key={line.key} className="flex items-center justify-between gap-2 text-xs">
+              <span className="min-w-0 truncate">
+                {line.mode === "ingreso" ? "Ingreso" : line.mode === "tarjeta" ? "Tarjeta" : line.mode === "servicio" ? "Mensual" : "Gasto"}
+                {" · "}
+                {line.concept.trim() || "Sin concepto"}
+                {" · "}
+                {line.amount}
+              </span>
+              <button
+                type="button"
+                className="shrink-0 text-[11px] font-medium text-muted-foreground"
+                onClick={() => setDrafts((list) => list.filter((item) => item.key !== line.key))}
+              >
+                Quitar
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="grid grid-cols-2 gap-2">
+        <Button className="h-11" disabled={busy} type="button" variant="outline" onClick={addDraft}>
+          Otro del día
+        </Button>
+        <Button className="h-11" disabled={busy} type="submit">
+          {busy ? "Guardando…" : readyCount > 1 ? `Guardar ${readyCount}` : "Listo"}
+        </Button>
+      </div>
     </form>
   );
 }

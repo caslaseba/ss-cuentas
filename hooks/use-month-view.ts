@@ -26,10 +26,11 @@ import {
   typicalMonthlySalary,
   uniqueById,
 } from "@/lib/finance/month-view";
-import { amountForMonth, BOOKS_START_ISO, BOOKS_START_MONTH, isCardRecurring, recurringApplies } from "@/lib/finance/recurring";
-import { cardBillItemIds, cardBillMonthOf, isCardBillPayment, isUnpaidCarryPayment } from "@/lib/finance/tx-notes";
+import { amountForMonth, BOOKS_START_ISO, BOOKS_START_MONTH, isCardRecurring, nextMonthKey, recurringApplies } from "@/lib/finance/recurring";
+import { cardBillItemIds, cardBillMonthOf, cardPartialIndex, isCardBillPayment, isUnpaidCarryPayment } from "@/lib/finance/tx-notes";
+import { walkCardLedger } from "@/lib/finance/card-balance";
 import { walkUnpaidCarry } from "@/lib/finance/unpaid-carry";
-import { closeOnForMonth, describedPeriod, salaryMonthOf } from "@/lib/finance/close-cycle";
+import { closeOnForMonth, describedPeriod, salaryMonthOf, windowMonthOf } from "@/lib/finance/close-cycle";
 import { monthIsFuture, monthIsPast, monthIsSealed } from "@/lib/finance/edit-lock";
 import { hasCarryOver, monthWallet, shiftMonth } from "@/lib/finance/wallet";
 import { monthKey, startOfMonth } from "@/lib/utils";
@@ -98,10 +99,8 @@ export function useMonthView(initial?: Date) {
   }
 
   function inCardWindow(tx: Transaction, monthCursor: Date) {
-    const close = closeFor(tx.credit_card_id);
-    const start = close(shiftMonth(monthCursor, -1));
-    const end = close(monthCursor);
-    return Boolean(start && end && start <= end && tx.occurred_on >= start && tx.occurred_on <= end);
+    const found = windowMonthOf(tx.occurred_on, closeFor(tx.credit_card_id));
+    return Boolean(found && monthKey(found) === monthKey(monthCursor));
   }
 
   function projectFor(monthCursor: Date) {
@@ -211,7 +210,7 @@ export function useMonthView(initial?: Date) {
     if (tx.type !== "egreso" || tx.payment_method === "tarjeta_credito" || !isCardBillPayment(tx.notes)) continue;
     const items = cardBillItemIds(tx.notes);
     const month = cardBillMonthOf(tx.notes);
-    if (!items.length && month) fullPaidMonths.add(month);
+    if (!items.length && month && cardPartialIndex(tx.notes) == null) fullPaidMonths.add(month);
     for (const id of items) paidCardIds.add(id);
   }
   const settledCardIds = new Set(paidCardIds);
@@ -228,7 +227,8 @@ export function useMonthView(initial?: Date) {
   const cardHitsNow = cardSum(unpaidNow);
   const cardHitsNext = cardSum(hitsNext);
   const cardHitsLater = cardSum(hitsLater);
-  const cardDue = unpaidNow
+  const viewedKey = monthKey(cursor);
+  const cardDueGross = hitsNow
     .reduce(
       (sum, tx) => {
         const amount = toArs(Number(tx.amount), tx.currency);
@@ -247,8 +247,38 @@ export function useMonthView(initial?: Date) {
       },
     );
 
+  function chargesOf(key: string) {
+    const [year, monthNumber] = key.split("-").map(Number);
+    if (!year || !monthNumber) return 0;
+    return cardSum(hitsSalary(new Date(year, monthNumber - 1, 1)));
+  }
+
+  function paidOf(key: string) {
+    return transactions.reduce((sum, tx) => {
+      if (tx.type !== "egreso" || tx.payment_method === "tarjeta_credito" || !isCardBillPayment(tx.notes, key)) return sum;
+      const amount = toArs(Number(tx.amount), tx.currency);
+      return Number.isFinite(amount) ? sum + amount : sum;
+    }, 0);
+  }
+
+  const cardAccount = walkCardLedger({
+    viewedMonth: viewedKey,
+    booksStart: BOOKS_START_MONTH,
+    charges: chargesOf,
+    paid: paidOf,
+    settledByCarry: (source) => {
+      const next = nextMonthKey(source);
+      return transactions.reduce((sum, tx) => {
+        if (tx.type !== "egreso" || tx.payment_method === "tarjeta_credito") return sum;
+        if (!tx.occurred_on.startsWith(next) || !isUnpaidCarryPayment(tx.notes, source)) return sum;
+        const amount = toArs(Number(tx.amount), tx.currency);
+        return Number.isFinite(amount) ? sum + amount : sum;
+      }, 0);
+    },
+  });
+  const cardDue = { ...cardDueGross, total: cardAccount.pending };
+
   const nowMonth = monthKey(now);
-  const viewedKey = monthKey(cursor);
   const unpaidCarry = walkUnpaidCarry({
     viewedMonth: viewedKey,
     nowMonth,
@@ -256,15 +286,7 @@ export function useMonthView(initial?: Date) {
     born: (key) => {
       const [year, monthNumber] = key.split("-").map(Number);
       const monthDate = new Date(year, (monthNumber || 1) - 1, 1);
-      const bill = cardSum(hitsSalary(monthDate));
-      const paid = transactions.reduce((sum, tx) => {
-        if (tx.type !== "egreso" || tx.payment_method === "tarjeta_credito" || !isCardBillPayment(tx.notes, key)) return sum;
-        const amount = toArs(Number(tx.amount), tx.currency);
-        return Number.isFinite(amount) ? sum + amount : sum;
-      }, 0);
       const parts = [];
-      const cardLeft = Math.round((bill - paid) * 100) / 100;
-      if (cardLeft > 0.004) parts.push({ kind: "tarjeta" as const, month: key, name: "Tarjeta sin cubrir", amount: cardLeft });
       for (const item of recurring) {
         if (isCardRecurring(item) || !recurringApplies(item, key)) continue;
         const priced = amountForMonth(item, key);
@@ -322,6 +344,7 @@ export function useMonthView(initial?: Date) {
     canGoNext,
     canGoPrev: monthKey(cursor) > BOOKS_START_MONTH,
     cardDue,
+    cardAccount,
     cardBillTx: unpaidNow,
     salaryCardTx: hitsNow,
     salaryCardFrom: salaryPeriod.start,
